@@ -1,0 +1,53 @@
+name: Build
+
+# Сборка при каждом пуше и PR — проверка, что проект компилируется (артефакт можно скачать в Actions).
+# Релиз: git tag v1.2.3 && git push origin v1.2.3 — соберёт WinTweaker.exe и опубликует релиз.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Version
+        shell: pwsh
+        run: |
+          $v = '0.0.0'
+          if ('${{ github.ref_type }}' -eq 'tag') { $v = '${{ github.ref_name }}'.TrimStart('v') }
+          "VERSION=$v" >> $env:GITHUB_ENV
+
+      - name: Publish
+        run: dotnet publish WinTweaker.csproj -c Release -p:Version=${{ env.VERSION }} -o publish
+
+      - name: Checksum
+        shell: pwsh
+        run: (Get-FileHash publish/WinTweaker.exe -Algorithm SHA256).Hash + '  WinTweaker.exe' | Out-File publish/WinTweaker.exe.sha256 -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WinTweaker-${{ env.VERSION }}
+          path: |
+            publish/WinTweaker.exe
+            publish/WinTweaker.exe.sha256
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            publish/WinTweaker.exe
+            publish/WinTweaker.exe.sha256
+          generate_release_notes: true
