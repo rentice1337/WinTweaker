@@ -1,22 +1,38 @@
 name: Build
 
 # Сборка при каждом пуше и PR — проверка, что проект компилируется (артефакт можно скачать в Actions).
-# Релиз: git tag v1.2.3 && git push origin v1.2.3 — соберёт WinTweaker.exe и опубликует релиз.
+# Релиз — любым способом, WinTweaker.exe прикрепится сам:
+#   • создать релиз на сайте (Releases → Draft a new release) с любым тегом: 1.6.0 или v1.6.0;
+#   • git tag v1.2.3 && git push origin v1.2.3;
+#   • дособрать уже созданный релиз: Actions → Build → Run workflow → указать тег.
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Тег релиза, к которому приложить WinTweaker.exe (например 1.5.5). Пусто — просто сборка.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
 
 jobs:
   build:
+    # релиз с тегом v* уже собирается по пушу тега — второй раз не нужно
+    if: github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'v')
     runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || (github.event_name == 'release' && github.event.release.tag_name) || (github.ref_type == 'tag' && github.ref_name) || '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -26,7 +42,7 @@ jobs:
         shell: pwsh
         run: |
           $v = '0.0.0'
-          if ('${{ github.ref_type }}' -eq 'tag') { $v = '${{ github.ref_name }}'.TrimStart('v') }
+          if ($env:TAG) { $v = $env:TAG.TrimStart('v', 'V') }
           "VERSION=$v" >> $env:GITHUB_ENV
 
       - name: Publish
@@ -53,9 +69,12 @@ jobs:
             publish/WinTweaker.exe.sha256
 
       - name: Release
-        if: github.ref_type == 'tag'
+        if: env.TAG != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
+          # релиз, созданный на сайте: его описание сохраняем, инструкция добавляется ниже
+          append_body: true
           files: |
             publish/WinTweaker.exe
             publish/WinTweaker.exe.sha256
