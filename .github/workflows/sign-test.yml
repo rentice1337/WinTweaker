@@ -1,8 +1,4 @@
 name: Sign test
-on:
-  push:
-    branches:
-    - sign-test
 jobs:
   t:
     runs-on: windows-latest
@@ -14,7 +10,9 @@ jobs:
     - run: dotnet publish WinTweaker.csproj -c Release -p:Version=2.0.0 -o publish
     - name: Key script (Windows PowerShell 5.1)
       shell: powershell
-      run: 'function Read-Host { param($p) Write-Host "[ответ на: $p] н"; ''н'' }
+      run: 'try {
+
+        function Read-Host { param($p) Write-Host "[ответ на: $p] н"; ''н'' }
 
         . .\tools\New-SigningCert.ps1
 
@@ -26,17 +24,27 @@ jobs:
 
         "SIGN_PASSWORD=$(Get-Content (Join-Path $d ''SIGN_PFX_PASSWORD.txt'') -Raw)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
 
-        if (Get-ChildItem Cert:\CurrentUser\My | Where-Object Subject -eq ''CN=rentice1337'') { throw ''ключ остался в хранилище'' } else { ''хранилище чистое'' }'
+        if (Get-ChildItem Cert:\CurrentUser\My | Where-Object Subject -eq ''CN=rentice1337'') { throw ''ключ остался в хранилище'' } else { ''хранилище чистое'' }
+
+        } catch { $m = ($_ | Out-String) + $_.ScriptStackTrace; Write-Host "::error::$($m -replace "`r?`n", ''%0A'')"; exit 1 }'
     - name: Sign
       shell: pwsh
-      run: "$pfx = Join-Path $env:RUNNER_TEMP 'sign.pfx'\n[IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_PFX.Trim()))\ntry {\n  $signtool = Get-ChildItem \"${env:ProgramFiles(x86)}\\Windows Kits\\10\\bin\\*\\x64\\signtool.exe\" |\n    Sort-Object FullName -Descending | Select-Object -First 1\n  if (-not $signtool) { throw 'signtool.exe не найден' }\n  # метка времени: подпись остаётся действительной и после окончания срока сертификата\n  $ok = $false\n  foreach ($ts in 'http://timestamp.digicert.com', 'http://timestamp.sectigo.com', 'http://timestamp.globalsign.com/tsa/r6advanced1') {\n    & $signtool.FullName sign /fd SHA256 /f $pfx /p $env:SIGN_PASSWORD /tr $ts /td SHA256 `\n      /d 'WinTweak' /du 'https://github.com/rentice1337/WinTweaker' publish\\WinTweaker.exe\n    if ($LASTEXITCODE -eq 0) { $ok = $true; break }\n    Write-Warning \"Сервер меток времени $ts не ответил, пробую следующий\"\n  }\n  if (-not $ok) { throw 'Не удалось подписать WinTweaker.exe' }\n\n\
-        \  $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $env:SIGN_PASSWORD)\n  [IO.File]::WriteAllBytes('publish\\WinTweaker-signing.cer', $cert.Export('Cert'))\n  \"SIGN_THUMB=$($cert.Thumbprint)\" >> $env:GITHUB_ENV\n  \"SIGN_SUBJECT=$($cert.GetNameInfo('SimpleName', $false))\" >> $env:GITHUB_ENV\n\n  $sig = Get-AuthenticodeSignature publish\\WinTweaker.exe\n  if (-not $sig.SignerCertificate -or $sig.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw 'Подпись в exe не найдена' }\n  \"Подписано: $($sig.SignerCertificate.Subject), отпечаток $($cert.Thumbprint), метка времени: $([bool]$sig.TimeStamperCertificate)\"\n}\nfinally { Remove-Item $pfx -Force -ErrorAction SilentlyContinue }\n"
+      run: "try {\n$pfx = Join-Path $env:RUNNER_TEMP 'sign.pfx'\n[IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_PFX.Trim()))\ntry {\n  $signtool = Get-ChildItem \"${env:ProgramFiles(x86)}\\Windows Kits\\10\\bin\\*\\x64\\signtool.exe\" |\n    Sort-Object FullName -Descending | Select-Object -First 1\n  if (-not $signtool) { throw 'signtool.exe не найден' }\n  # метка времени: подпись остаётся действительной и после окончания срока сертификата\n  $ok = $false\n  foreach ($ts in 'http://timestamp.digicert.com', 'http://timestamp.sectigo.com', 'http://timestamp.globalsign.com/tsa/r6advanced1') {\n    & $signtool.FullName sign /fd SHA256 /f $pfx /p $env:SIGN_PASSWORD /tr $ts /td SHA256 `\n      /d 'WinTweak' /du 'https://github.com/rentice1337/WinTweaker' publish\\WinTweaker.exe\n    if ($LASTEXITCODE -eq 0) { $ok = $true; break }\n    Write-Warning \"Сервер меток времени $ts не ответил, пробую следующий\"\n  }\n  if (-not $ok) { throw 'Не удалось подписать WinTweaker.exe'\
+        \ }\n\n  $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $env:SIGN_PASSWORD)\n  [IO.File]::WriteAllBytes('publish\\WinTweaker-signing.cer', $cert.Export('Cert'))\n  \"SIGN_THUMB=$($cert.Thumbprint)\" >> $env:GITHUB_ENV\n  \"SIGN_SUBJECT=$($cert.GetNameInfo('SimpleName', $false))\" >> $env:GITHUB_ENV\n\n  $sig = Get-AuthenticodeSignature publish\\WinTweaker.exe\n  if (-not $sig.SignerCertificate -or $sig.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw 'Подпись в exe не найдена' }\n  \"Подписано: $($sig.SignerCertificate.Subject), отпечаток $($cert.Thumbprint), метка времени: $([bool]$sig.TimeStamperCertificate)\"\n}\nfinally { Remove-Item $pfx -Force -ErrorAction SilentlyContinue }\n\n} catch { $m = ($_ | Out-String) + $_.ScriptStackTrace; Write-Host \"::error::$($m -replace \"`r?`n\", '%0A')\"; exit 1 }"
     - name: Check
       shell: pwsh
-      run: 'Get-AuthenticodeSignature publish\WinTweaker.exe | Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
+      run: 'try {
+
+        Get-AuthenticodeSignature publish\WinTweaker.exe | Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
 
         (Get-Item publish\WinTweaker.exe).VersionInfo | Format-List CompanyName, LegalCopyright, ProductName, FileDescription, ProductVersion
 
         "thumb=$env:SIGN_THUMB subject=$env:SIGN_SUBJECT"
 
-        Get-Item publish\WinTweaker-signing.cer'
+        Get-Item publish\WinTweaker-signing.cer
+
+        } catch { $m = ($_ | Out-String) + $_.ScriptStackTrace; Write-Host "::error::$($m -replace "`r?`n", ''%0A'')"; exit 1 }'
+on:
+  push:
+    branches:
+    - sign-test
