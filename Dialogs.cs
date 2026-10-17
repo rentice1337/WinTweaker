@@ -435,3 +435,81 @@ class DetailsDialog : RoundForm
         d.ShowDialog(owner);
     }
 }
+
+/// <summary>Ввод короткой строки (например, имя набора) в стиле программы.</summary>
+class Prompt : RoundForm
+{
+    readonly string title, message;
+    readonly TextBox box = new();
+    int baseTop;
+    bool closing;
+
+    Prompt(string title, string message, string value)
+    {
+        this.title = title;
+        this.message = message;
+        StartPosition = FormStartPosition.Manual;
+        KeyPreview = true;
+        Opacity = 0;
+        Size = new Size(460, 220);
+
+        box.BorderStyle = BorderStyle.None;
+        box.BackColor = Theme.Hover;
+        box.ForeColor = Theme.Text;
+        box.Font = Theme.F(11f);
+        box.Text = value;
+        box.SetBounds(38, 104, Width - 76, box.PreferredHeight);
+        Controls.Add(box);
+
+        var ok = new FlatBtn("", "Сохранить") { Primary = true };
+        ok.Location = new Point(Width - 24 - ok.Width + ok.Pad, Height - 22 - ok.Height + ok.Pad);
+        ok.Click += (_, _) => Finish(DialogResult.OK);
+        Controls.Add(ok);
+        var no = new FlatBtn("", "Отмена");
+        no.Location = new Point(ok.Left + ok.Pad - no.Width - 8, ok.Top + ok.Pad);
+        no.Click += (_, _) => Finish(DialogResult.Cancel);
+        Controls.Add(no);
+
+        KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter) { Finish(DialogResult.OK); e.SuppressKeyPress = true; }
+            if (e.KeyCode == Keys.Escape) Finish(DialogResult.Cancel);
+        };
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        if (Owner != null)
+            Location = new Point(Owner.Left + (Owner.Width - Width) / 2, Owner.Top + (Owner.Height - Height) / 2);
+        baseTop = Top;
+        box.Focus();
+        box.SelectAll();
+        Motion.Run(220, p => { Opacity = p; Top = baseTop + (int)Math.Round(12 * (1 - p)); });
+    }
+
+    void Finish(DialogResult r)
+    {
+        if (closing) return;
+        closing = true;
+        Motion.Run(130, p => Opacity = 1 - p, Motion.InOut, 0, () => { DialogResult = r; Close(); });
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        TextRenderer.DrawText(g, title, Theme.F(12f, FontStyle.Bold), new Point(24, 22), Theme.Text);
+        TextRenderer.DrawText(g, message, Theme.Body, new Rectangle(24, 50, Width - 48, 40), Theme.Muted, TextFormatFlags.WordBreak);
+        var field = new RectangleF(24, 94, Width - 48, 40);
+        Theme.Fill(g, Theme.Hover, field, 9);
+        using var pen = new Pen(Color.FromArgb(160, Theme.Accent), 1.2f);
+        using var path = Theme.Round(field, 9);
+        g.DrawPath(pen, path);
+    }
+
+    public static string? Ask(IWin32Window owner, string title, string message, string value = "")
+    {
+        using var p = new Prompt(title, message, value);
+        return p.ShowDialog(owner) == DialogResult.OK ? p.box.Text : null;
+    }
+}

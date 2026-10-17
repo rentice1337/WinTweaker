@@ -291,8 +291,12 @@ static class Spotlight
         lit.Remove(s);
     }
 
+    /// <summary>Выключается в «Настройках».</summary>
+    public static bool Enabled { get; set; } = true;
+
     public static void Move(Point screen)
     {
+        if (!Enabled) return;
         if (Math.Abs(screen.X - Cursor.X) + Math.Abs(screen.Y - Cursor.Y) < 2) return;
         Cursor = screen;
         if (Motion.Reduced) return;

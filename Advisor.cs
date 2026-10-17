@@ -14,9 +14,22 @@ sealed class Rec
 static class Hardware
 {
     public static string DiskKind { get; private set; } = "";   // SSD / HDD / "" — неизвестно
+    /// <summary>Подключённые сейчас видеокарты (реестр помнит и давно вынутые — поэтому CIM).</summary>
+    public static List<string>? Gpus { get; private set; }
+    public static int Cores { get; private set; }
 
     public static void Detect()
     {
+        try
+        {
+            Gpus = Shell.PS("Get-CimInstance Win32_VideoController | Where-Object { $_.Status -eq 'OK' -or $_.ConfigManagerErrorCode -eq 0 } | ForEach-Object { $_.Name }")
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(n => !n.Contains("Basic", StringComparison.OrdinalIgnoreCase) && !n.Contains("Remote Display", StringComparison.OrdinalIgnoreCase))
+                .Distinct().ToList();
+        }
+        catch { Gpus = null; }
+        try { Cores = int.TryParse(Shell.PS("(Get-CimInstance Win32_Processor | Measure-Object NumberOfCores -Sum).Sum").Trim(), out int c) ? c : 0; }
+        catch { Cores = 0; }
         try
         {
             string r = Shell.PS("$n = (Get-Partition -DriveLetter $env:SystemDrive.TrimEnd(':') | Get-Disk).Number; " +

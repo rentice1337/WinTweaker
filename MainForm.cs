@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace WinTweaker;
 
-public class MainForm : Form
+public partial class MainForm : Form
 {
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
     [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, int w, int l);
@@ -10,33 +10,43 @@ public class MainForm : Form
     const string Home = "Главная";
     const string History = "История";
     const string Diagnostics = "Диагностика";
+    const string SettingsPage = "Настройки";
 
     // Боковое меню: раздел → пункты (названия совпадают с Category в Catalog.cs)
     static readonly (string Section, (string Cat, string Glyph)[] Items)[] Nav =
     {
-        ("", new[] { (Home, ""), (Diagnostics, ""), (History, "") }),
+        ("", new[] { (Home, "\uE80F"), (Diagnostics, "\uE9D9"), (History, "\uE81C") }),
         ("Система", new[]
         {
-            ("Конфиденциальность", ""),
-            ("Интерфейс", ""),
-            ("Проводник", ""),
-            ("Производительность", ""),
-            ("Безопасность", ""),
+            ("Конфиденциальность", "\uE72E"),
+            ("Интерфейс", "\uE771"),
+            ("Панель задач", "\uE7C4"),
+            ("Проводник", "\uE8B7"),
+            ("Контекстное меню", "\uE700"),
+            ("Производительность", "\uEC4A"),
+            ("Безопасность", "\uEA18"),
+        }),
+        ("Устройства", new[]
+        {
+            ("Мышь и клавиатура", "\uE962"),
+            ("Звук и уведомления", "\uE767"),
         }),
         ("Софт", new[]
         {
-            ("Приложения", ""),
-            (StartupManager.Cat, ""),
-            ("Службы", ""),
-            ("Обновления", ""),
-            ("Игры", ""),
-            ("Обслуживание", ""),
+            (Programs.Cat, "\uE7B8"),
+            ("Приложения", "\uE71D"),
+            (StartupManager.Cat, "\uE7E8"),
+            ("Службы", "\uE912"),
+            ("Обновления", "\uE895"),
+            ("Игры", "\uE7FC"),
+            ("Обслуживание", "\uE90F"),
         }),
         ("Сеть", new[]
         {
-            ("Сеть", ""),
-            ("Обход блокировок", ""),
+            ("Сеть", "\uE968"),
+            ("Обход блокировок", "\uE774"),
         }),
+        ("Программа", new[] { (SettingsPage, "\uE713") }),
     };
 
     static string GlyphOf(string cat) =>
@@ -45,6 +55,8 @@ public class MainForm : Form
     readonly List<Tweak> tweaks = Catalog.All();
     readonly Dictionary<Tweak, bool> current = new();
     readonly Dictionary<Tweak, bool> desired = new();
+    readonly Dictionary<Tweak, int> curVal = new();
+    readonly Dictionary<Tweak, int> desVal = new();
     readonly List<NavItem> navItems = new();
     readonly NavHost nav = new();
     readonly Viewport view = new();
@@ -68,8 +80,8 @@ public class MainForm : Form
         Text = "WinTweaker";
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
-        Size = new Size(1140, 790);
-        MinimumSize = new Size(1000, 620);
+        Size = new Size(1180, 860);
+        MinimumSize = new Size(1040, 640);
         BackColor = Theme.Bg;
         Font = Theme.Body;
         DoubleBuffered = true;
@@ -86,6 +98,7 @@ public class MainForm : Form
         Controls.Add(main);
         Controls.Add(BuildSidebar());
 
+        ApplyAppSettings();
         view.Resize += (_, _) => Relayout();
         liveTimer.Tick += (_, _) => LiveTick();
         cursorTimer.Tick += (_, _) => { if (WindowState != FormWindowState.Minimized) Spotlight.Move(Cursor.Position); };
@@ -96,6 +109,7 @@ public class MainForm : Form
         {
             cursorTimer.Start();
             await LoadStateAsync();
+            if (AppSettings.Get("updates", "1") == "1") _ = CheckUpdates(manual: false);
         };
     }
 
@@ -152,8 +166,8 @@ public class MainForm : Form
         {
             if (section != "")
             {
-                nc.Labels.Add((section, y + 8));
-                y += 28;
+                nc.Labels.Add((section, y + 7));
+                y += 25;
             }
             foreach (var (cat, glyph) in items)
             {
@@ -191,19 +205,16 @@ public class MainForm : Form
         apply.Click += async (_, _) => await ApplyAsync();
         var refresh = new FlatBtn("", "");
         refresh.Click += async (_, _) => { if (!busy) await LoadStateAsync(); };
-        var more = new FlatBtn("", "Меню");
         tip.SetToolTip(apply, "Применить отмеченные изменения (Ctrl+Enter)");
         tip.SetToolTip(refresh, "Перепроверить состояние системы (F5)");
         tip.SetToolTip(restoreToggle, "Создавать точку восстановления Windows перед применением изменений.\nТребует включённой защиты системы на диске C:.");
         tip.SetToolTip(trigger, "Палитра команд — найти и переключить любую настройку (Ctrl+K)");
 
-        var menu = BuildMenu();
-        more.Click += (_, _) => { UpdateMenu(menu); menu.Show(more, new Point(0, more.Height + 4)); };
 
         int x = 18;
         apply.Location = new Point(x - apply.Pad, (top.Height - apply.Height) / 2);
         x += apply.Width - apply.Pad * 2 + 8;
-        foreach (var c in new Control[] { refresh, more })
+        foreach (var c in new Control[] { refresh })
         {
             c.Location = new Point(x, 16);
             x += c.Width + 6;
@@ -211,7 +222,7 @@ public class MainForm : Form
         restoreToggle.Location = new Point(x + 12, 19);
         top.LabelAt = new Point(restoreToggle.Right + 4, 22);
         int labelEnd = top.LabelAt.X + TextRenderer.MeasureText(top.Label, Theme.Body).Width + 18;
-        top.Controls.AddRange(new Control[] { apply, refresh, more, restoreToggle });
+        top.Controls.AddRange(new Control[] { apply, refresh, restoreToggle });
         trigger.Click += (_, _) => OpenPalette();
 
         var close = new FlatBtn("", "") { Danger = true };
@@ -227,48 +238,6 @@ public class MainForm : Form
             trigger.SetBounds(min.Left - 14 - w, 15, w, 34);
         };
         return top;
-    }
-
-    ContextMenuStrip BuildMenu()
-    {
-        var menu = new ContextMenuStrip { Renderer = new DarkRenderer(), Font = Theme.Body, ShowImageMargin = true };
-        menu.Items.Add("Скопировать код профиля", null, (_, _) => CopyCode());
-        menu.Items.Add("Вставить код профиля из буфера", null, (_, _) => PasteCode());
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Сохранить профиль в файл…", null, (_, _) => SaveProfile());
-        menu.Items.Add("Загрузить профиль из файла…", null, (_, _) => LoadProfile());
-        menu.Items.Add(new ToolStripSeparator());
-        var accent = new ToolStripMenuItem("Цвет акцента") { Name = "accent" };
-        for (int i = 0; i < Theme.Accents.Length; i++)
-        {
-            int idx = i;
-            var bmp = new Bitmap(14, 14);
-            using (var g = Graphics.FromImage(bmp))
-            using (var b = new SolidBrush(Theme.Accents[i].Color))
-            {
-                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                g.FillEllipse(b, 1, 1, 12, 12);
-            }
-            accent.DropDownItems.Add(Theme.Accents[i].Name, bmp, (_, _) => ChangeAccent(idx));
-        }
-        accent.DropDown.BackColor = Theme.Card;
-        ((ToolStripDropDownMenu)accent.DropDown).Renderer = new DarkRenderer();
-        menu.Items.Add(accent);
-        menu.Items.Add(new ToolStripMenuItem("Стекло: размытые обои под окном", null, (_, _) => ToggleGlass()) { Name = "glass" });
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Создать точку восстановления", null, async (_, _) =>
-        {
-            if (!busy && await RunBusy("Создание точки восстановления…", CreateRestorePoint)) Toast.Pop(this, "Точка восстановления создана");
-        });
-        return menu;
-    }
-
-    void UpdateMenu(ContextMenuStrip menu)
-    {
-        if (menu.Items["glass"] is ToolStripMenuItem glass) glass.Checked = AppSettings.Get("glass", "1") == "1";
-        if (menu.Items["accent"] is ToolStripMenuItem acc)
-            for (int i = 0; i < acc.DropDownItems.Count; i++)
-                if (acc.DropDownItems[i] is ToolStripMenuItem it) it.Checked = Theme.Accents[i].Color == Theme.Accent;
     }
 
     void ToggleGlass()
@@ -345,6 +314,7 @@ public class MainForm : Form
             case Home: BuildDashboard(); break;
             case History: BuildHistory(); break;
             case Diagnostics: BuildDiagnostics(); break;
+            case SettingsPage: BuildSettings(); break;
             default:
                 var items = tweaks.Where(t => t.Category == selected).ToList();
                 cv.Controls.Add(new Header(selected, Subtitle(items)));
@@ -458,7 +428,7 @@ public class MainForm : Form
         cv.Controls.Add(new LiveWidget());
 
         var cats = Nav.SelectMany(s => s.Items).Select(i => i.Cat)
-            .Where(c => c is not (Home or History or Diagnostics) && c != StartupManager.Cat)
+            .Where(c => c is not (Home or History or Diagnostics or SettingsPage) && c != StartupManager.Cat && c != Programs.Cat)
             .Select(c =>
             {
                 var list = tweaks.Where(t => t.Category == c && !t.IsAction).ToList();
@@ -689,9 +659,12 @@ public class MainForm : Form
 
     string Subtitle(List<Tweak> items)
     {
-        var real = items.Where(t => !t.IsAction).ToList();
-        int actions = items.Count - real.Count;
-        string s = $"настроек: {real.Count} · включено: {real.Count(t => current.GetValueOrDefault(t))}";
+        var real = items.Where(t => t.IsToggle).ToList();
+        int values = items.Count(t => t.IsValue);
+        int actions = items.Count(t => t.IsAction);
+        string s = selected == Programs.Cat
+            ? $"программ: {real.Count} · установлено: {real.Count(t => current.GetValueOrDefault(t))} · включить = установить через winget"
+            : $"настроек: {real.Count + values} · включено: {real.Count(t => current.GetValueOrDefault(t))}";
         if (actions > 0) s += $" · действий: {actions}";
         if (items.Count == 0) s = "здесь пока пусто";
         return s;
@@ -728,7 +701,22 @@ public class MainForm : Form
             r.FolderBtn.Click += (_, _) => { try { t.OpenFolder!(); } catch { } };
         }
 
-        if (r.Toggle != null)
+        if (r.Seg != null || r.Slide != null)
+        {
+            int v = desVal.GetValueOrDefault(t);
+            if (r.Seg != null) r.Seg.Value = v;
+            if (r.Slide != null) r.Slide.Value = v;
+            r.SetChangedNow(v != curVal.GetValueOrDefault(t));
+            void OnValue(int nv)
+            {
+                desVal[t] = nv;
+                r.Changed = nv != curVal.GetValueOrDefault(t);
+                UpdatePending();
+            }
+            if (r.Seg != null) r.Seg.Changed += OnValue;
+            if (r.Slide != null) r.Slide.Changed += OnValue;
+        }
+        else if (r.Toggle != null)
         {
             r.Toggle.Checked = desired.GetValueOrDefault(t);
             r.SetChangedNow(desired.GetValueOrDefault(t) != current.GetValueOrDefault(t));
@@ -789,7 +777,7 @@ public class MainForm : Form
         void Cmd(string glyph, string title, string sub, Action run) =>
             list.Add(new PaletteItem { Glyph = glyph, Title = title, Sub = sub, Run = run, Order = order++, Search = "команда" });
 
-        int pending = tweaks.Count(t => !t.IsAction && desired.GetValueOrDefault(t) != current.GetValueOrDefault(t));
+        int pending = Pending();
         Cmd("", "Применить изменения", pending > 0 ? $"Отмечено изменений: {pending} · Ctrl+Enter" : "Нечего применять", () => _ = ApplyAsync());
         Cmd("", "Перепроверить настройки", "Перечитать состояние системы · F5", () => _ = LoadStateAsync());
         Cmd("", "Скопировать код профиля", "Строка WT1-… для друга", CopyCode);
@@ -809,6 +797,11 @@ public class MainForm : Form
             int idx = i;
             list.Add(new PaletteItem { Glyph = "", Title = "Акцент: " + Theme.Accents[i].Name, Sub = "Цвет интерфейса", Search = "цвет тема", Order = 500 + i, Run = () => ChangeAccent(idx) });
         }
+        foreach (var set in Sets.Load())
+        {
+            var st = set;
+            list.Add(new PaletteItem { Glyph = "\uE8FD", Title = "Набор: " + st.Name, Sub = $"Отметить {st.Tweaks.Count} настроек", Search = "набор мой", Order = 600 + order++, Run = () => MarkSet(st) });
+        }
         foreach (var t in tweaks)
         {
             var tw = t;
@@ -819,9 +812,11 @@ public class MainForm : Form
                 Sub = tw.Category + (tw.Group != null ? " · " + tw.Group : ""),
                 Search = tw.Description,
                 Order = 1000 + order++,
-                KeepOpen = !tw.IsAction,
-                Badge = tw.IsAction ? () => ("перейти", Theme.Muted) : () => BadgeFor(tw),
-                Run = tw.IsAction ? () => GoTo(tw) : () => TogglePalette(tw)
+                KeepOpen = tw.IsToggle,
+                Badge = tw.IsAction ? () => ("перейти", Theme.Muted)
+                      : tw.IsValue ? () => (tw.ValueText(desVal.GetValueOrDefault(tw)), desVal.GetValueOrDefault(tw) != curVal.GetValueOrDefault(tw) ? Theme.Accent : Theme.Muted)
+                      : () => BadgeFor(tw),
+                Run = tw.IsToggle ? () => TogglePalette(tw) : () => GoTo(tw)
             });
         }
         return list;
@@ -847,7 +842,7 @@ public class MainForm : Form
 
     // ───────── Профили ─────────
 
-    IEnumerable<Tweak> Shareable => tweaks.Where(t => !t.IsAction && t.Category != StartupManager.Cat);
+    IEnumerable<Tweak> Shareable => tweaks.Where(t => t.IsToggle && t.Category != StartupManager.Cat);
 
     void CopyCode()
     {
@@ -906,13 +901,17 @@ public class MainForm : Form
 
     // ───────── Состояние и применение ─────────
 
+    int Pending() =>
+        tweaks.Count(t => t.IsToggle && desired.GetValueOrDefault(t) != current.GetValueOrDefault(t)) +
+        tweaks.Count(t => t.IsValue && desVal.GetValueOrDefault(t) != curVal.GetValueOrDefault(t));
+
     void UpdatePending()
     {
         if (busy) return;
-        int n = tweaks.Count(t => !t.IsAction && desired.GetValueOrDefault(t) != current.GetValueOrDefault(t));
+        int n = Pending();
         if (n == 0)
         {
-            var real = tweaks.Where(t => !t.IsAction && t.Category != StartupManager.Cat).ToList();
+            var real = tweaks.Where(t => t.IsToggle && t.Category != StartupManager.Cat && t.Category != Programs.Cat).ToList();
             badge.SetStatus($"Применено {real.Count(t => current.GetValueOrDefault(t))} из {real.Count}", Theme.Muted);
         }
         else badge.SetStatus($"Изменений к применению: {n}", Theme.Accent);
@@ -927,10 +926,20 @@ public class MainForm : Form
         {
             AppxCache.Reset();
             DnsCache.Reset();
+            Programs.Installed.Reset();
             if (detect) Hardware.Detect();
+            try { watchOn = Watch.Installed(); } catch { }
             try { startup = StartupManager.Load(); } catch { }
             foreach (var t in tweaks.Where(t => t.Category != StartupManager.Cat).Concat(startup))
             {
+                if (t.IsValue)
+                {
+                    int val = 0;
+                    try { val = t.Get!(); } catch { }
+                    curVal[t] = val;
+                    desVal[t] = val;
+                    continue;
+                }
                 bool v = false;
                 if (!t.IsAction)
                     try { v = t.IsApplied(); } catch { }
@@ -957,16 +966,20 @@ public class MainForm : Form
     {
         if (busy) return;
         var changes = tweaks
-            .Where(t => !t.IsAction && desired.GetValueOrDefault(t) != current.GetValueOrDefault(t) && (desired[t] || t.Revert != null))
+            .Where(t => t.IsToggle && desired.GetValueOrDefault(t) != current.GetValueOrDefault(t) && (desired[t] || t.Revert != null))
             .ToList();
-        if (changes.Count == 0)
+        var vchanges = tweaks.Where(t => t.IsValue && desVal.GetValueOrDefault(t) != curVal.GetValueOrDefault(t)).ToList();
+        int total = changes.Count + vchanges.Count;
+        if (total == 0)
         {
             Toast.Pop(this, "Нет изменений для применения", Tone.Info);
             return;
         }
 
         var risky = changes.Where(t => t.Risky && desired[t]).Select(t => "• " + t.Name).ToList();
-        string msg = $"Будет изменено настроек: {changes.Count}.";
+        string msg = $"Будет изменено настроек: {total}.";
+        var installs = changes.Where(t => t.Category == Programs.Cat).ToList();
+        if (installs.Count > 0) msg += $"\n\nПрограмм к установке/удалению: {installs.Count} — это может занять несколько минут.";
         if (risky.Count > 0) msg += "\n\nСреди них рискованные:\n" + string.Join("\n", risky);
         msg += "\n\nВсё попадёт в «Историю» — откатить можно в один клик.";
         if (!Dialog.Confirm(this, "Применить изменения?", msg, "Применить", "Отмена", risky.Count > 0 ? Tone.Warning : Tone.Info))
@@ -974,7 +987,7 @@ public class MainForm : Form
 
         var errors = new List<string>();
         bool makeRestore = restoreToggle.Checked;
-        bool restart = changes.Any(t => t.NeedsRestart);
+        bool restart = changes.Concat(vchanges).Any(t => t.NeedsRestart);
         await RunBusy("Применение…", () =>
         {
             if (makeRestore)
@@ -984,9 +997,17 @@ public class MainForm : Form
             }
             int n = 0;
             var session = Journal.StartSession();
+            foreach (var t in vchanges)
+            {
+                SetStatus($"[{++n}/{total}] {t.Name}");
+                Journal.BeginValue(session, t, curVal[t], desVal[t]);
+                try { t.Set!(desVal[t]); }
+                catch (Exception ex) { errors.Add($"{t.Name}: {ex.Message}"); }
+                finally { Journal.End(); }
+            }
             foreach (var t in changes)
             {
-                SetStatus($"[{++n}/{changes.Count}] {t.Name}");
+                SetStatus($"[{++n}/{total}] {t.Name}");
                 Journal.Begin(session, t, current[t], desired[t]);
                 try
                 {
@@ -1003,10 +1024,11 @@ public class MainForm : Form
         if (errors.Count > 0)
             Dialog.Info(this, "Применено с ошибками", string.Join("\n", errors), Tone.Error);
         else
-            Toast.Pop(this, $"Применено изменений: {changes.Count}");
+            Toast.Pop(this, $"Применено изменений: {total}");
         if (restart) Toast.Pop(this, "Часть настроек заработает после перезагрузки", Tone.Warning);
 
-        bool touchesShell = changes.Any(t => t.Category is "Интерфейс" or "Проводник");
+        bool touchesShell = changes.Concat(vchanges).Any(t => t.Category is "Интерфейс" or "Проводник" or "Панель задач" or "Контекстное меню" or "Звук и уведомления")
+                            && AppSettings.Get("askExplorer", "1") == "1";
         if (touchesShell && Dialog.Confirm(this, "Перезапустить Проводник?",
                 "Так изменения панели задач и Проводника вступят в силу сразу. Открытые окна Проводника закроются.",
                 "Перезапустить", "Не сейчас"))
