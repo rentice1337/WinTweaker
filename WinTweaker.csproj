@@ -14,7 +14,10 @@
 
     <!-- Версия подставляется из git-тега при релизе (-p:Version=1.2.3) -->
     <Version>1.0.0</Version>
-    <Product>WinTweaker</Product>
+    <Product>WinTweak</Product>
+    <Company>rentice1337</Company>
+    <Authors>rentice1337</Authors>
+    <AssemblyTitle>WinTweak — настройка Windows 10</AssemblyTitle>
     <Description>Настройка Windows 10</Description>
     <Copyright>MIT License</Copyright>
   </PropertyGroup>
