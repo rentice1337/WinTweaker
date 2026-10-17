@@ -488,6 +488,7 @@ class WatchBanner : Widget
     protected override void OnLayout(LayoutEventArgs e)
     {
         base.OnLayout(e);
+        if (Fix is null) return;
         Fix.Location = new Point(Width - Fix.Width - 14, (Height - Fix.Height) / 2);
     }
 
