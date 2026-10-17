@@ -334,8 +334,18 @@ abstract class Surface : FadeIn
         }
     }
 
-    Region? bodyRegion, edgeRegion;
+    Region? edgeRegion;
     Size regionsFor;
+
+    void EnsureRegions(GraphicsPath path)
+    {
+        if (edgeRegion != null && regionsFor == Size) return;
+        edgeRegion?.Dispose();
+        using var ring = (GraphicsPath)path.Clone();
+        using (var pen = new Pen(Color.Black, 2f)) ring.Widen(pen);
+        edgeRegion = new Region(ring);
+        regionsFor = Size;
+    }
 
     /// <summary>Полосы вдоль рамки возле точки (координаты карточки) — только их перерисовывает подсветка.</summary>
     public IEnumerable<Rectangle> EdgeBands(Point p)
