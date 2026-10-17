@@ -113,7 +113,7 @@ abstract class LayeredForm : Form
         base.OnFormClosed(e);
     }
 
-    protected static void Text(Graphics g, string s, Font f, Color c, RectangleF r, StringAlignment h = StringAlignment.Center,
+    protected static void Txt(Graphics g, string s, Font f, Color c, RectangleF r, StringAlignment h = StringAlignment.Center,
         StringAlignment v = StringAlignment.Center, bool wrap = false)
     {
         using var b = new SolidBrush(c);
@@ -605,8 +605,8 @@ sealed class TrayWheel : LayeredForm
         var c = Polar(mida, rm);
         var fg = Color.FromArgb(alpha, Theme.Lerp(Color.FromArgb(200, 203, 216), Color.White, h));
         var ic = Color.FromArgb(alpha, h > 0.3 || active ? Color.White : Theme.Lerp(Theme.Accent, Color.White, 0.15));
-        Text(g, cmd.Glyph, IconF, ic, new RectangleF(c.X - 20, c.Y - 24, 40, 24));
-        Text(g, cmd.Short, LabelF, fg, new RectangleF(c.X - 40, c.Y + 1, 80, Search ? 28 : 16), wrap: Search);
+        Txt(g, cmd.Glyph, IconF, ic, new RectangleF(c.X - 20, c.Y - 24, 40, 24));
+        Txt(g, cmd.Short, LabelF, fg, new RectangleF(c.X - 40, c.Y + 1, 80, Search ? 28 : 16), wrap: Search);
     }
 
     void DrawCenter(Graphics g, double p)
@@ -626,35 +626,35 @@ sealed class TrayWheel : LayeredForm
         var muted = Color.FromArgb(a, Theme.Muted);
         if (msg1 != null)
         {
-            Text(g, msg1, msg1.Length > 9 ? MidF : BigF, Color.FromArgb(a, msgColor), new RectangleF(box.X - 6, C - 26, box.Width + 12, 30));
-            if (msg2 != null) Text(g, msg2, SmallF, muted, new RectangleF(box.X - 4, C + 4, box.Width + 8, 28), StringAlignment.Center, StringAlignment.Near, true);
+            Txt(g, msg1, msg1.Length > 9 ? MidF : BigF, Color.FromArgb(a, msgColor), new RectangleF(box.X - 6, C - 26, box.Width + 12, 30));
+            if (msg2 != null) Txt(g, msg2, SmallF, muted, new RectangleF(box.X - 4, C + 4, box.Width + 8, 28), StringAlignment.Center, StringAlignment.Near, true);
             return;
         }
         if (hoverGame >= 0 && hoverGame < games.Count)
         {
-            Text(g, games[hoverGame].Title, MidF, Color.FromArgb(a, Theme.Text), new RectangleF(box.X - 6, C - 30, box.Width + 12, 40), wrap: true);
-            Text(g, "запустить", SmallF, Color.FromArgb(a, Theme.Accent), new RectangleF(box.X, C + 12, box.Width, 16));
+            Txt(g, games[hoverGame].Title, MidF, Color.FromArgb(a, Theme.Text), new RectangleF(box.X - 6, C - 30, box.Width + 12, 40), wrap: true);
+            Txt(g, "запустить", SmallF, Color.FromArgb(a, Theme.Accent), new RectangleF(box.X, C + 12, box.Width, 16));
             return;
         }
         if (Search)
         {
-            Text(g, "› " + query, MidF, Color.FromArgb(a, Theme.Text), new RectangleF(box.X - 8, C - 26, box.Width + 16, 22));
+            Txt(g, "› " + query, MidF, Color.FromArgb(a, Theme.Text), new RectangleF(box.X - 8, C - 26, box.Width + 16, 22));
             var sel = At(Selected);
             string sub = results.Count == 0 ? "ничего не найдено" : sel != null ? sel.Title + (sel.Sub != "" ? " · " + sel.Sub : "") : $"найдено: {results.Count}";
-            Text(g, sub, SmallF, muted, new RectangleF(box.X - 6, C - 2, box.Width + 12, 30), StringAlignment.Center, StringAlignment.Near, true);
+            Txt(g, sub, SmallF, muted, new RectangleF(box.X - 6, C - 2, box.Width + 12, 30), StringAlignment.Center, StringAlignment.Near, true);
             return;
         }
         var cmd = At(Selected);
         if (cmd != null)
         {
-            Text(g, cmd.Title, MidF, Color.FromArgb(a, Theme.Text), new RectangleF(box.X - 8, C - 26, box.Width + 16, 22));
-            Text(g, cmd.Sub, SmallF, muted, new RectangleF(box.X - 6, C - 2, box.Width + 12, 30), StringAlignment.Center, StringAlignment.Near, true);
+            Txt(g, cmd.Title, MidF, Color.FromArgb(a, Theme.Text), new RectangleF(box.X - 8, C - 26, box.Width + 16, 22));
+            Txt(g, cmd.Sub, SmallF, muted, new RectangleF(box.X - 6, C - 2, box.Width + 12, 30), StringAlignment.Center, StringAlignment.Near, true);
             return;
         }
-        Text(g, $"{s.Ram:0}%", BigF, Color.FromArgb(a, Theme.Text), new RectangleF(box.X - 6, C - 26, box.Width + 12, 30));
-        Text(g, "ОЗУ", SmallF, muted, new RectangleF(box.X, C + 2, box.Width, 14));
+        Txt(g, $"{s.Ram:0}%", BigF, Color.FromArgb(a, Theme.Text), new RectangleF(box.X - 6, C - 26, box.Width + 12, 30));
+        Txt(g, "ОЗУ", SmallF, muted, new RectangleF(box.X, C + 2, box.Width, 14));
         string line = $"CPU {s.Cpu:0}%" + (s.PingMs is int pm ? $" · {pm} мс" : "");
-        Text(g, line, SmallF, muted, new RectangleF(box.X - 8, C + 15, box.Width + 16, 14));
+        Txt(g, line, SmallF, muted, new RectangleF(box.X - 8, C + 15, box.Width + 16, 14));
     }
 
     static void Arc(Graphics g, float r, float th, double v, Color c, double p)
@@ -681,7 +681,7 @@ sealed class TrayWheel : LayeredForm
         int n = SlotCount;
         if (n == 0)
         {
-            Text(g, GameLibrary.Scanned ? "Игры не найдены — добавьте их в «Игровом центре»" : "Ищу игры…", SmallF,
+            Txt(g, GameLibrary.Scanned ? "Игры не найдены — добавьте их в «Игровом центре»" : "Ищу игры…", SmallF,
                 Color.FromArgb((int)(255 * p), Theme.Muted), new RectangleF(C - 120, C - (gi + go) / 2 - 10, 240, 20));
             return;
         }
@@ -765,8 +765,8 @@ sealed class TrayWheel : LayeredForm
         var dot = new RectangleF(pill.X + 14, pill.Y + h / 2 - 5, 10, 10);
         using (var db = new SolidBrush(Color.FromArgb(a, col))) g.FillEllipse(db, dot);
         float tx = dot.Right + 8, tw = pill.Right - tx - (hint.Act != null ? 26 : 14);
-        Text(g, text, PillF, Color.FromArgb(a, Theme.Text), new RectangleF(tx, pill.Y, tw, h), StringAlignment.Near);
+        Txt(g, text, PillF, Color.FromArgb(a, Theme.Text), new RectangleF(tx, pill.Y, tw, h), StringAlignment.Near);
         if (hint.Act != null)
-            Text(g, "", IconS, Color.FromArgb(a, hoverPill ? col : Theme.Muted), new RectangleF(pill.Right - 26, pill.Y, 18, h));
+            Txt(g, "", IconS, Color.FromArgb(a, hoverPill ? col : Theme.Muted), new RectangleF(pill.Right - 26, pill.Y, 18, h));
     }
 }

@@ -616,7 +616,7 @@ class TraceWidget : Widget
 class BgAppsWidget : Widget
 {
     public readonly FlatBtn CloseNow = new("", "Закрыть отмеченные") { Danger = true };
-    public readonly FlatBtn Refresh = new("", "");
+    public readonly FlatBtn RefreshBtn = new("", "");
     List<(BackgroundApps.App App, long Bytes)>? running;
     HashSet<string> selected = BackgroundApps.Selected;
     int hot = -1;
@@ -625,7 +625,7 @@ class BgAppsWidget : Widget
     public BgAppsWidget() : base("Фоновые программы", 28 + Top0 + RowH + 56)
     {
         Controls.Add(CloseNow);
-        Controls.Add(Refresh);
+        Controls.Add(RefreshBtn);
     }
 
     public event Action? Resized;
@@ -643,8 +643,8 @@ class BgAppsWidget : Widget
     protected override void OnLayout(LayoutEventArgs e)
     {
         base.OnLayout(e);
-        if (CloseNow is null || Refresh is null) return;
-        Refresh.Location = new Point(Width - Refresh.Width - 12, Height - Refresh.Height - 12);
+        if (CloseNow is null || RefreshBtn is null) return;
+        RefreshBtn.Location = new Point(Width - RefreshBtn.Width - 12, Height - RefreshBtn.Height - 12);
         CloseNow.Location = new Point(14, Height - CloseNow.Height - 12);
     }
 

@@ -36,7 +36,7 @@ public partial class MainForm
         _ = FixReverted();
     }
 
-    public void OpenReport(MatchReport r)
+    internal void OpenReport(MatchReport r)
     {
         ShowFromTray();
         using var d = new ReportDialog(r);
