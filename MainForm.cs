@@ -74,7 +74,6 @@ public class MainForm : Form
         Font = Theme.Body;
         DoubleBuffered = true;
         KeyPreview = true;
-        Opacity = 0;
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         int acc = int.TryParse(AppSettings.Get("accent", "0"), out var a) ? Math.Clamp(a, 0, Theme.Accents.Length - 1) : 0;
         Theme.SetAccent(Theme.Accents[acc].Color);
@@ -95,7 +94,6 @@ public class MainForm : Form
         Load += (_, _) => Glass.Attach(this);
         Shown += async (_, _) =>
         {
-            Motion.Run(340, p => Opacity = p, Motion.ExpoOut);
             cursorTimer.Start();
             await LoadStateAsync();
         };
@@ -359,15 +357,10 @@ public class MainForm : Form
         if (focus != null) FocusRow(focus);
     }
 
-    // каскадное появление: заголовок, затем карточки с шагом 45 мс
+    // каскадное появление: заголовок, затем карточки с шагом 40 мс (снимками — без перерисовки живых окон)
     void RevealAll()
     {
-        int i = 0;
-        foreach (var f in view.Canvas.Controls.OfType<FadeIn>())
-        {
-            f.Hide0();
-            f.Reveal(i++ * 45);
-        }
+        view.Canvas.Reveal(view.Canvas.Controls.Cast<Control>().ToList(), 40);
     }
 
     // Раскладка: широкие блоки на всю ширину, остальные — в две колонки «кирпичиком»

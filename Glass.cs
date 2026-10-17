@@ -24,8 +24,8 @@ static class Glass
     public static readonly Color HoverTint = Color.FromArgb(20, 255, 255, 255);
     public static readonly Color Border = Color.FromArgb(26, 255, 255, 255);
 
-    static Bitmap? backdrop;
-    static TextureBrush? brush;
+    static Bitmap? backdrop;   // высота 3H: [кадр, отражённый кадр, кадр] — период 2H, любой кусок ≤ H вырезается одним блитом
+    static int frameH;
     static Form? host;
 
     public static bool WallpaperOn { get; private set; }
@@ -55,8 +55,8 @@ static class Glass
         WallpaperOn = transparency && AppSettings.Get("glass", "1") == "1";
 
         var size = host.Size;
-        var bmp = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppPArgb);
-        using (var g = Graphics.FromImage(bmp))
+        using var frame = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppPArgb);
+        using (var g = Graphics.FromImage(frame))
         {
             g.Clear(Theme.Bg);
             if (WallpaperOn)
@@ -69,12 +69,23 @@ static class Glass
             Blob(g, new PointF(size.Width * 0.70f, size.Height * 0.30f), size.Width * 0.35f, Color.FromArgb(12, 120, 140, 255));
         }
 
-        var oldBrush = brush;
-        var oldBmp = backdrop;
-        backdrop = bmp;
-        brush = new TextureBrush(bmp, WrapMode.TileFlipY);
-        oldBrush?.Dispose();
-        oldBmp?.Dispose();
+        var tall = new Bitmap(size.Width, size.Height * 3, PixelFormat.Format32bppPArgb);
+        using (var g = Graphics.FromImage(tall))
+        {
+            g.CompositingMode = CompositingMode.SourceCopy;
+            g.DrawImageUnscaled(frame, 0, 0);
+            using (var flipped = (Bitmap)frame.Clone())
+            {
+                flipped.RotateFlip(RotateFlipType.RotateNoneFlipY);
+                g.DrawImageUnscaled(flipped, 0, size.Height);
+            }
+            g.DrawImageUnscaled(frame, 0, size.Height * 2);
+        }
+        var old = backdrop;
+        backdrop = tall;
+        frameH = size.Height;
+        old?.Dispose();
+        Spotlight.ResetAssets();
     }
 
     static void Blob(Graphics g, PointF c, float r, Color col)
@@ -155,16 +166,28 @@ static class Glass
     public static void Back(Graphics g, Control c)
     {
         var form = c.FindForm();
-        if (brush == null || form == null || form != host)
+        if (backdrop == null || form == null || form != host)
         {
             g.Clear(SolidOf(c));
             return;
         }
 
+        // рисуем только то, что реально перерисовывается
+        var clip = Rectangle.Ceiling(g.VisibleClipBounds);
+        clip.Intersect(new Rectangle(0, 0, c.Width, c.Height));
+        if (clip.Width <= 0 || clip.Height <= 0) return;
+
         var o = Origin(c, form);
-        brush.ResetTransform();
-        brush.TranslateTransform(-o.X, -o.Y);
-        g.FillRectangle(brush, 0, 0, c.Width, c.Height);
+        int period = frameH * 2;
+        int sy = ((o.Y + clip.Y) % period + period) % period;
+        int sx = Math.Clamp(o.X + clip.X, 0, Math.Max(0, backdrop.Width - clip.Width));
+        int h = Math.Min(clip.Height, backdrop.Height - sy);
+        var state = g.Save();
+        g.CompositingMode = CompositingMode.SourceCopy;
+        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+        g.PixelOffsetMode = PixelOffsetMode.None;
+        g.DrawImage(backdrop, new Rectangle(clip.X, clip.Y, clip.Width, h), new Rectangle(sx, sy, clip.Width, h), GraphicsUnit.Pixel);
+        g.Restore(state);
 
         // слои над фоном
         for (var p = c; p != null; p = p.Parent)
@@ -181,7 +204,7 @@ static class Glass
     {
         if (col.A == 0) return;
         using var b = new SolidBrush(col);
-        g.FillRectangle(b, 0, 0, c.Width, c.Height);
+        g.FillRectangle(b, g.VisibleClipBounds);
     }
 
     public static Color Scale(Color c, double k) => Color.FromArgb((int)Math.Clamp(c.A * k, 0, 255), c);
@@ -220,7 +243,45 @@ static class Spotlight
     public static Point Cursor { get; private set; } = new(-10000, -10000);
     static readonly List<Surface> surfaces = new();
     static readonly HashSet<Surface> lit = new();
-    public const int Reach = 150;
+    public const int Reach = 90, R = 200;
+
+    static Bitmap? soft, edge;
+    static Color edgeFor;
+
+    /// <summary>Мягкий белый блик для тела карточки.</summary>
+    public static Bitmap Soft => soft ??= Radial(Color.FromArgb(16, 255, 255, 255));
+
+    /// <summary>Свечение рамки цветом акцента (пересоздаётся при смене акцента).</summary>
+    public static Bitmap Edge
+    {
+        get
+        {
+            if (edge == null || edgeFor != Theme.Accent)
+            {
+                edge?.Dispose();
+                edge = Radial(Color.FromArgb(240, Theme.Accent));
+                edgeFor = Theme.Accent;
+            }
+            return edge;
+        }
+    }
+
+    public static void ResetAssets()
+    {
+        edge?.Dispose();
+        edge = null;
+    }
+
+    static Bitmap Radial(Color center)
+    {
+        var bmp = new Bitmap(R * 2, R * 2, PixelFormat.Format32bppPArgb);
+        using var g = Graphics.FromImage(bmp);
+        using var path = new GraphicsPath();
+        path.AddEllipse(0, 0, R * 2, R * 2);
+        using var b = new PathGradientBrush(path) { CenterColor = center, SurroundColors = new[] { Color.FromArgb(0, center) } };
+        g.FillPath(b, path);
+        return bmp;
+    }
 
     public static void Register(Surface s) => surfaces.Add(s);
 
@@ -286,8 +347,102 @@ sealed class WheelFilter : IMessageFilter
 /// <summary>Холст с содержимым: прокрутка = сдвиг холста целиком (одно окно — без мерцания).</summary>
 class Canvas : Control
 {
+    sealed class Ghost
+    {
+        public Control Target = null!;
+        public Bitmap Bmp = null!;
+        public double Delay;
+        public double A;
+    }
+
+    readonly List<Ghost> ghosts = new();
+    Tween? anim;
+    double start;
+    const double Dur = 420, Rise = 16;
+
     public Canvas() { SetStyle(Theme.Smooth, true); }
-    protected override void OnPaint(PaintEventArgs e) => Glass.Back(e.Graphics, this);
+
+    /// <summary>
+    /// Каскадное появление: каждая карточка снимается в картинку, прячется, а холст рисует снимки
+    /// с нарастающей прозрачностью и подъёмом. Дочерние окна в это время не трогаются — отсюда плавность.
+    /// </summary>
+    public void Reveal(IList<Control> items, double stagger)
+    {
+        Finish();
+        if (Motion.Reduced) return;
+        int i = 0;
+        foreach (var c in items)
+        {
+            if (c.Width <= 0 || c.Height <= 0 || c.Top > Height) continue;
+            var bmp = new Bitmap(c.Width, c.Height, PixelFormat.Format32bppPArgb);
+            try { c.DrawToBitmap(bmp, new Rectangle(0, 0, c.Width, c.Height)); }
+            catch { bmp.Dispose(); continue; }
+            ghosts.Add(new Ghost { Target = c, Bmp = bmp, Delay = i++ * stagger });
+            c.Visible = false;
+        }
+        if (ghosts.Count == 0) return;
+        start = Motion.Now;
+        double total = Dur + ghosts.Max(g => g.Delay);
+        anim = Motion.Run(total, _ => Step(), x => x, 0, Finish);
+    }
+
+    void Step()
+    {
+        if (IsDisposed) return;
+        double now = Motion.Now - start;
+        var dirty = Rectangle.Empty;
+        foreach (var g in ghosts.ToArray())
+        {
+            double t = Math.Clamp((now - g.Delay) / Dur, 0, 1);
+            if (t <= 0) continue;
+            g.A = Motion.ExpoOut(t);
+            var r = new Rectangle(g.Target.Left, g.Target.Top, g.Bmp.Width, g.Bmp.Height + (int)Rise + 1);
+            dirty = dirty.IsEmpty ? r : Rectangle.Union(dirty, r);
+            if (t >= 1)
+            {
+                ghosts.Remove(g);
+                g.Target.Visible = true;
+                g.Bmp.Dispose();
+            }
+        }
+        if (!dirty.IsEmpty) Invalidate(dirty, false);
+    }
+
+    void Finish()
+    {
+        anim?.Cancel();
+        anim = null;
+        foreach (var g in ghosts)
+        {
+            if (!g.Target.IsDisposed) g.Target.Visible = true;
+            g.Bmp.Dispose();
+        }
+        ghosts.Clear();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) Finish();
+        base.Dispose(disposing);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        Glass.Back(e.Graphics, this);
+        if (ghosts.Count == 0) return;
+        var g = e.Graphics;
+        using var ia = new ImageAttributes();
+        foreach (var gh in ghosts)
+        {
+            if (gh.A <= 0.004) continue;
+            int y = gh.Target.Top + (int)Math.Round((1 - gh.A) * Rise);
+            var dest = new Rectangle(gh.Target.Left, y, gh.Bmp.Width, gh.Bmp.Height);
+            if (!dest.IntersectsWith(e.ClipRectangle)) continue;
+            if (gh.A >= 0.995) { g.DrawImageUnscaled(gh.Bmp, dest.Location); continue; }
+            ia.SetColorMatrix(new ColorMatrix { Matrix33 = (float)gh.A });
+            g.DrawImage(gh.Bmp, dest, 0, 0, gh.Bmp.Width, gh.Bmp.Height, GraphicsUnit.Pixel, ia);
+        }
+    }
 }
 
 /// <summary>Окно прокрутки без полосы: плавная прокрутка колесом с инерцией expo-out.</summary>
