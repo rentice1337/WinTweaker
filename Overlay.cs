@@ -1,8 +1,6 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
-using Microsoft.Diagnostics.Tracing;
-using Microsoft.Diagnostics.Tracing.Session;
 
 namespace WinTweaker;
 
@@ -41,123 +39,6 @@ static class OverlaySettings
             return int.TryParse(v, out int k) ? (Keys)k : Keys.None;
         }
         set => AppSettings.Set("ov.hk", ((int)value).ToString());
-    }
-}
-
-/// <summary>
-/// Счётчик кадров без внедрения в игру: события Windows (ETW) о показе кадров — провайдеры
-/// Microsoft-Windows-DXGI (Present_Start, DirectX 10–12) и Microsoft-Windows-D3D9 (DirectX 9).
-/// Так работают PresentMon и подобные инструменты; в процесс игры ничего не загружается — античитам нечего замечать.
-/// Игры на Vulkan/OpenGL без DXGI эти события не пишут — для них FPS не показывается.
-/// </summary>
-static class FpsMeter
-{
-    static readonly Guid Dxgi = new("CA11C036-0102-4A2D-A6AD-F03CFED5D3C9");
-    static readonly Guid D3D9 = new("783ACA0A-790E-4D7F-8451-AA850511C6B9");
-
-    static TraceEventSession? session;
-    static Thread? thread;
-    static readonly object gate = new();
-    static readonly List<double> times = new();   // отметки показа кадров (мс), последние ~12 с
-    static int pid;
-    static int users;
-    static double sumFt, sumCount;                 // для средних за сессию
-    static readonly List<double> sessionLows = new();
-    public static bool Failed { get; private set; }
-
-    /// <summary>Чей FPS считать.</summary>
-    public static int Pid
-    {
-        get => pid;
-        set
-        {
-            if (pid == value) return;
-            lock (gate) { pid = value; times.Clear(); }
-        }
-    }
-
-    /// <summary>Начать (счётчик ссылок: оверлей и статистика могут работать одновременно).</summary>
-    public static void Acquire()
-    {
-        if (Interlocked.Increment(ref users) > 1 || thread != null) return;
-        Failed = false;
-        thread = new Thread(Run) { IsBackground = true, Name = "WinTweak FPS" };
-        thread.Start();
-    }
-
-    public static void Release()
-    {
-        if (Interlocked.Decrement(ref users) > 0) return;
-        users = 0;
-        try { session?.Dispose(); } catch { }
-        session = null;
-        thread = null;
-        lock (gate) times.Clear();
-    }
-
-    static void Run()
-    {
-        try
-        {
-            var s = new TraceEventSession("WinTweak-FPS") { StopOnDispose = true };
-            session = s;
-            s.EnableProvider(Dxgi, TraceEventLevel.Informational, ulong.MaxValue);
-            s.EnableProvider(D3D9, TraceEventLevel.Informational, ulong.MaxValue);
-            s.Source.AllEvents += OnEvent;
-            s.Source.Process(); // блокирует, пока сессию не закроют
-        }
-        catch { Failed = true; }
-    }
-
-    static void OnEvent(TraceEvent e)
-    {
-        if (e.ProcessID != pid || pid == 0) return;
-        int id = (int)e.ID;
-        bool present = (e.ProviderGuid == Dxgi && id == 42) || (e.ProviderGuid == D3D9 && id == 1);
-        if (!present) return;
-        double t = e.TimeStampRelativeMSec;
-        lock (gate)
-        {
-            if (times.Count > 0)
-            {
-                double ft = t - times[^1];
-                if (ft > 0 && ft < 1000) { sumFt += ft; sumCount++; }
-            }
-            times.Add(t);
-            // держим ~12 секунд
-            int cut = 0;
-            while (cut < times.Count && t - times[cut] > 12000) cut++;
-            if (cut > 0) times.RemoveRange(0, cut);
-        }
-    }
-
-    public readonly record struct Reading(double Fps, double FrameMs, double Low1, double[] Recent);
-
-    /// <summary>FPS за последнюю секунду, среднее время кадра, 1% low за ~10 с и последние времена кадров для графика.</summary>
-    public static Reading? Read()
-    {
-        double[] t;
-        lock (gate) t = times.ToArray();
-        if (t.Length < 3) return null;
-        double now = t[^1];
-        int n1 = t.Count(x => now - x <= 1000);
-        var ft = new double[t.Length - 1];
-        for (int i = 1; i < t.Length; i++) ft[i - 1] = t[i] - t[i - 1];
-        var lastSec = ft.Skip(Math.Max(0, ft.Length - n1)).ToArray();
-        double avg = lastSec.Length > 0 ? lastSec.Average() : ft.Average();
-        var sorted = ft.OrderByDescending(x => x).ToArray();
-        int k = Math.Max(1, sorted.Length / 100);
-        double low = 1000 / sorted.Take(k).Average();
-        var recent = ft.Skip(Math.Max(0, ft.Length - 240)).ToArray();
-        return new Reading(n1, avg, low, recent);
-    }
-
-    /// <summary>Средний FPS с момента последнего сброса (для игровой статистики).</summary>
-    public static double? SessionAverage(bool reset)
-    {
-        double? r = sumCount > 30 ? 1000 / (sumFt / sumCount) : null;
-        if (reset) { sumFt = 0; sumCount = 0; }
-        return r;
     }
 }
 
@@ -487,7 +368,7 @@ sealed class OverlayWindow : LayeredForm
                 g.DrawLines(pen, pts);
                 Txt(g, $"{fr.FrameMs:0.0} мс", small, Theme.Text, new RectangleF(area.Right + 4 * k, y + 6 * k, 52 * k, 18 * k), StringAlignment.Near);
             }
-            else Txt(g, FpsMeter.Failed ? "FPS недоступен" : "нет кадров DirectX", small, Theme.Dim, area, StringAlignment.Near);
+            else Txt(g, FpsMeter.Failed ? "FPS: " + FpsMeter.Error : "нет кадров DirectX 9–12", small, Theme.Dim, area, StringAlignment.Near);
             y += 38 * k;
         }
         var line1 = new List<(string, Color)>();
