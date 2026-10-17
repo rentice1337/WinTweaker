@@ -283,6 +283,8 @@ static class Spotlight
         return bmp;
     }
 
+    public static bool AnyLit => lit.Count > 0;
+
     public static void Register(Surface s) => surfaces.Add(s);
 
     public static void Unregister(Surface s)

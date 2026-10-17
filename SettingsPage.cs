@@ -67,6 +67,8 @@ public partial class MainForm
             string k = key;
             tray.Add("   " + name, desc, () => Widgets.IsEnabled(k), on => Widgets.SetEnabled(k, on));
         }
+        tray.Add("Компактные виджеты", "Уменьшенные версии всех виджетов; у каждого отдельно — правый клик → «Компактный вид»",
+            () => Widgets.AllCompact, on => Widgets.AllCompact = on);
         tray.Add("Закрепить виджеты", "Нельзя случайно сдвинуть мышью (правый клик по виджету — то же)",
             () => DesktopWidget.Locked, on => { DesktopWidget.Locked = on; AppSettings.Set("w.lock", on ? "1" : "0"); });
         cv.Controls.Add(tray);

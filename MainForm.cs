@@ -107,7 +107,16 @@ public partial class MainForm : Form
         ApplyAppSettings();
         view.Resize += (_, _) => Relayout();
         liveTimer.Tick += (_, _) => LiveTick();
-        cursorTimer.Tick += (_, _) => { if (WindowState != FormWindowState.Minimized) Spotlight.Move(Cursor.Position); };
+        cursorTimer.Tick += (_, _) =>
+        {
+            // окно спрятано или курсор далеко от него — подсветке нечего делать
+            if (!Visible || WindowState == FormWindowState.Minimized) return;
+            var c = Cursor.Position;
+            var near = Bounds;
+            near.Inflate(Spotlight.Reach, Spotlight.Reach);
+            if (!near.Contains(c) && !Spotlight.AnyLit) return;
+            Spotlight.Move(c);
+        };
         ShowSkeleton();
 
         Sampler.Start();
