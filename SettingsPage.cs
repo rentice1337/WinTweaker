@@ -50,6 +50,27 @@ public partial class MainForm
             () => AppSettings.Get("updates", "1") == "1", on => AppSettings.Set("updates", on ? "1" : "0"));
         cv.Controls.Add(apply);
 
+        // ── Трей и виджеты ──
+        var tray = new OptionsCard("Трей и виджеты");
+        tray.Add("Закрывать в трей", "Крестик прячет окно в трей, выход — из панели значка в трее",
+            () => AppSettings.Get("tray", "1") == "1", on => AppSettings.Set("tray", on ? "1" : "0"));
+        tray.Add("Запуск вместе с Windows", "Сразу в трей, без окна и без запроса UAC (задание планировщика)",
+            () => autostartOn, async on =>
+            {
+                bool ok = await RunBusy(on ? "Включаю автозапуск…" : "Выключаю автозапуск…", on ? () => Autostart.Install() : () => Autostart.Uninstall());
+                autostartOn = ok ? on : !on;
+            });
+        tray.Add("Виджеты на рабочем столе", "Общий выключатель; также в панели трея",
+            () => Widgets.Master, on => Widgets.Master = on);
+        foreach (var (key, name, desc, _) in Widgets.All)
+        {
+            string k = key;
+            tray.Add("   " + name, desc, () => Widgets.IsEnabled(k), on => Widgets.SetEnabled(k, on));
+        }
+        tray.Add("Закрепить виджеты", "Нельзя случайно сдвинуть мышью (правый клик по виджету — то же)",
+            () => DesktopWidget.Locked, on => { DesktopWidget.Locked = on; AppSettings.Set("w.lock", on ? "1" : "0"); });
+        cv.Controls.Add(tray);
+
         // ── Свои наборы ──
         var sets = new SetsWidget(Sets.Load(), s => Shareable.Count(t => s.Tweaks.Contains(t.Name)));
         sets.SaveClicked += SaveSet;
@@ -75,7 +96,7 @@ public partial class MainForm
         cv.Controls.Add(about);
     }
 
-    bool watchOn;
+    bool watchOn, autostartOn;
 
     void ApplyAppSettings()
     {
