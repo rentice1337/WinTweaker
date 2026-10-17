@@ -169,7 +169,8 @@ public static class Journal
                 skipped.Add(item.Name);
                 continue;
             }
-            var t = tweaks.FirstOrDefault(x => x.Name == item.Name && x.Category == item.Category);
+            var t = tweaks.FirstOrDefault(x => x.Name == item.Name && x.Category == item.Category)
+                    ?? GameExe.Rebuild(item.Category, item.Name);
 
             foreach (var op in Enumerable.Reverse(item.Reg)) RestoreOp(op);
 
@@ -180,7 +181,7 @@ public static class Journal
                 // значение: реестр уже восстановлен выше, Set применяет его «вживую» (скорость мыши и т.п.)
                 try { t.Set(item.FromValue.Value); } catch { }
             }
-            else if (item.Reg.Count == 0 && t != null)
+            else if ((item.Reg.Count == 0 || item.Name == GameExe.NQos) && t != null)
             {
                 // изменение было не через реестр (PowerShell, sc, планировщик) — возвращаем прежнее состояние
                 if (item.WasApplied) t.Apply(); else t.Revert?.Invoke();
