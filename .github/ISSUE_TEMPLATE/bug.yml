@@ -1,6 +1,6 @@
 name: Ошибка
 description: Что-то работает не так или программа вылетает
-labels: [ошибка]
+labels: [bug]
 body:
   - type: markdown
     attributes:

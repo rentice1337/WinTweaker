@@ -1,6 +1,6 @@
 name: Идея
 description: Предложить новую настройку или функцию
-labels: [идея]
+labels: [enhancement]
 body:
   - type: textarea
     id: idea
