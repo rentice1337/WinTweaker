@@ -117,9 +117,9 @@ static class FpsMeter
         // сессия могла остаться от прошлого запуска (сбой) — останавливаем её
         uint r = 0;
         // основное имя; если сессия-«призрак» с этим именем не даёт себя закрыть — запасное, уникальное
-        foreach (var name in new[] { BaseName, $"{BaseName}-{Environment.ProcessId}" })
+        foreach (var candidate in new[] { BaseName, $"{BaseName}-{Environment.ProcessId}" })
         {
-            SessionName = name;
+            SessionName = candidate;
             var p = Props();
             try
             {
@@ -152,8 +152,8 @@ static class FpsMeter
             Marshal.WriteIntPtr(log, 424, Marshal.GetFunctionPointerForDelegate(callback));
             trace = OpenTraceW(log);
             if (trace == ulong.MaxValue || trace == 0) { Fail("OpenTrace", (uint)Marshal.GetLastWin32Error()); trace = 0; Stop(); return; }
-            uint r = ProcessTrace(new[] { trace }, 1, IntPtr.Zero, IntPtr.Zero); // блокирует до остановки сессии
-            if (r != 0 && r != 1223 /* отменено */ && users > 0) Fail("ProcessTrace", r);
+            uint pr = ProcessTrace(new[] { trace }, 1, IntPtr.Zero, IntPtr.Zero); // блокирует до остановки сессии
+            if (pr != 0 && pr != 1223 /* отменено */ && users > 0) Fail("ProcessTrace", pr);
         }
         catch (Exception ex) { Failed = true; Error = ex.Message; }
         finally
