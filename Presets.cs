@@ -12,7 +12,7 @@ static class Presets
 
     public static readonly Preset[] All =
     {
-        new("Рекомендуемый", "", "Безопасный набор для любого ПК", new[]
+        new("Рекомендуемый", "\uE735", "Безопасный набор для любого ПК", new[]
         {
             "Показывать расширения файлов",
             "Отключить советы, рекламу и автоустановку приложений",
@@ -28,7 +28,7 @@ static class Presets
             "Отключить SMBv1",
             "Защита от нежелательных программ (PUA)",
         }),
-        new("Игровой", "", "Максимум FPS и минимум задержек", new[]
+        new("Игровой", "\uE7FC", "Максимум FPS и минимум задержек", new[]
         {
             "Схема питания «Высокая производительность»",
             "Отключить фоновую запись (Game DVR)",
@@ -41,7 +41,7 @@ static class Presets
             "Запретить фоновые приложения",
             "Убрать задержку автозагрузки",
         }),
-        new("Приватность", "", "Меньше данных уходит в Microsoft", new[]
+        new("Приватность", "\uE72E", "Меньше данных уходит в Microsoft", new[]
         {
             "Минимальная телеметрия",
             "Отключить рекламный идентификатор",
@@ -57,7 +57,7 @@ static class Presets
             "Отключить: Телеметрия (DiagTrack)",
             "Отключить: WAP Push (dmwappushservice)",
         }),
-        new("Слабый ПК", "", "Разгружает процессор, память и диск", new[]
+        new("Слабый ПК", "\uEC4A", "Разгружает процессор, память и диск", new[]
         {
             "Визуальные эффекты: быстродействие",
             "Отключить прозрачность",
@@ -83,30 +83,31 @@ static class Presets
     }
 }
 
-/// <summary>Плитки пресетов 2×2: подсветка и «нажатие» при наведении, счётчик включённых.</summary>
+/// <summary>Пресеты — широкий ряд из 4 плиток: иконка, название, описание, прогресс.</summary>
 class PresetsWidget : Widget
 {
     readonly (Presets.Preset P, int On, int Total, int Pending)[] items;
     readonly AnimFloat[] hover;
     readonly AnimFloat press;
     int hot = -1, pressed = -1;
-    const int TileH = 88, Gap = 10;
+    const int TileH = 132, Gap = 10;
     public event Action<Presets.Preset>? Picked;
 
     public PresetsWidget((Presets.Preset, int, int, int)[] items)
-        : base("Пресеты", Head + 12 + 2 * TileH + Gap + 12)
+        : base("Пресеты — отмечают настройки, применяете вы", 28 + 12 + TileH + 12)
     {
         this.items = items;
-        hover = items.Select(_ => new AnimFloat(0, () => Invalidate())).ToArray();
-        press = new AnimFloat(0, () => Invalidate());
+        Wide = true;
+        hover = items.Select(_ => new AnimFloat(0, () => Invalidate(false))).ToArray();
+        press = new AnimFloat(0, () => Invalidate(false));
     }
 
     RectangleF Tile(int i)
     {
         var r = Body;
-        float w = (r.Width - 24 - Gap) / 2f;
-        int col = i % 2, row = i / 2;
-        return new RectangleF(r.Left + 12 + col * (w + Gap), r.Top + 12 + row * (TileH + Gap), w, TileH);
+        int n = items.Length;
+        float w = (r.Width - 24 - Gap * (n - 1)) / (float)n;
+        return new RectangleF(r.Left + 12 + i * (w + Gap), r.Top + 12, w, TileH);
     }
 
     int HitTest(Point p)
@@ -121,7 +122,7 @@ class PresetsWidget : Widget
         int h = HitTest(e.Location);
         if (h != hot)
         {
-            if (hot >= 0) hover[hot].To(0, 220);
+            if (hot >= 0) hover[hot].To(0, 240);
             if (h >= 0) hover[h].To(1, 150);
             hot = h;
             Cursor = h >= 0 ? Cursors.Hand : Cursors.Default;
@@ -131,7 +132,7 @@ class PresetsWidget : Widget
 
     protected override void OnMouseLeave(EventArgs e)
     {
-        if (hot >= 0) hover[hot].To(0, 220);
+        if (hot >= 0) hover[hot].To(0, 240);
         hot = -1;
         press.To(0, 200);
         base.OnMouseLeave(e);
@@ -160,42 +161,94 @@ class PresetsWidget : Widget
             var (p, on, total, pending) = items[i];
             var t = Tile(i);
             double h = hover[i].Value;
+            bool done = total > 0 && on == total;
 
             var state = g.Save();
             float s = 1f - (float)(i == pressed ? press.Value * 0.03 : 0);
-            g.TranslateTransform(t.X + t.Width / 2, t.Y + t.Height / 2);
+            float lift = (float)(-3 * h); // при наведении плитка чуть приподнимается
+            g.TranslateTransform(t.X + t.Width / 2, t.Y + t.Height / 2 + lift);
             g.ScaleTransform(s, s);
             g.TranslateTransform(-(t.X + t.Width / 2), -(t.Y + t.Height / 2));
 
-            Theme.Fill(g, C(Theme.Lerp(Theme.Hover, Theme.Line, h)), t, 9);
-            bool done = total > 0 && on == total;
+            if (h > 0.01) Theme.Glow(g, Theme.Accent, t, 11, 3, 2f, (int)(70 * h * Appear));
+            Theme.Fill(g, Color.FromArgb((int)((16 + 14 * h) * Appear), 255, 255, 255), t, 11);
+            using (var pen = new Pen(Color.FromArgb((int)((20 + 140 * h) * Appear), Theme.Lerp(Color.White, Theme.Accent, h))))
+            using (var path = Theme.Round(t, 11))
+                g.DrawPath(pen, path);
 
-            // иконка в круге
-            var circle = new RectangleF(t.X + 14, t.Y + 14, 34, 34);
-            using (var b = new SolidBrush(C(Theme.Lerp(Theme.Hover, Theme.Accent, 0.22 + 0.2 * h))))
-                g.FillEllipse(b, circle);
-            TextRenderer.DrawText(g, p.Glyph, Theme.Icon, Rectangle.Round(circle), C(Theme.Accent),
+            var circle = new RectangleF(t.X + 14, t.Y + 14, 38, 38);
+            Theme.Fill(g, Color.FromArgb((int)((48 + 50 * h) * Appear), Theme.Accent), circle, 19);
+            TextRenderer.DrawText(g, p.Glyph, Theme.IconBig, Rectangle.Round(circle), C(Theme.Lerp(Theme.Accent, Color.White, 0.3 * h)),
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            if (done)
+                TextRenderer.DrawText(g, "", Theme.Icon, new Rectangle((int)t.Right - 34, (int)t.Y + 12, 22, 22), C(Theme.Good),
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 
             var flags = TextFormatFlags.Left | TextFormatFlags.EndEllipsis;
-            int tx = (int)t.X + 58, tw = (int)t.Width - 70;
-            TextRenderer.DrawText(g, p.Name, Theme.Bold, new Rectangle(tx, (int)t.Y + 13, tw, 20), C(Theme.Text), flags);
-            TextRenderer.DrawText(g, p.Description, Theme.F(8.5f), new Rectangle(tx, (int)t.Y + 33, tw, 18), C(Theme.Muted), flags);
+            int tx = (int)t.X + 14, tw = (int)t.Width - 28;
+            TextRenderer.DrawText(g, p.Name, Theme.Bold, new Rectangle(tx, (int)t.Y + 60, tw, 20), C(Theme.Text), flags);
+            TextRenderer.DrawText(g, p.Description, Theme.Tiny, new Rectangle(tx, (int)t.Y + 80, tw, 18), C(Theme.Muted), flags);
 
-            string status = pending > 0 ? $"+{pending} к применению"
-                          : done ? "✓ всё включено"
-                          : $"включено {on} из {total}";
-            var statusColor = pending > 0 ? Theme.Accent : done ? Theme.Text : Theme.Dim;
-            TextRenderer.DrawText(g, status, Theme.F(8.25f), new Rectangle(tx, (int)t.Y + 58, tw, 18), C(statusColor), flags);
+            string status = pending > 0 ? $"+{pending} к применению" : done ? "всё включено" : $"включено {on} из {total}";
+            var statusColor = pending > 0 ? Theme.Accent : done ? Theme.Good : Theme.Dim;
+            TextRenderer.DrawText(g, status, Theme.Tiny, new Rectangle(tx, (int)t.Y + 100, tw, 18), C(statusColor), flags);
 
-            // мини-прогресс по нижнему краю плитки
             if (total > 0)
             {
-                var bar = new RectangleF(t.X + 14, t.Bottom - 7, t.Width - 28, 2);
-                Theme.Fill(g, C(Theme.Off), bar, 1);
-                Theme.Fill(g, C(Theme.Accent), new RectangleF(bar.X, bar.Y, (float)(bar.Width * on / total * Appear), 2), 1);
+                var bar = new RectangleF(t.X + 14, t.Bottom - 9, t.Width - 28, 3);
+                Theme.Fill(g, Color.FromArgb((int)(22 * Appear), 255, 255, 255), bar, 1.5f);
+                Theme.Fill(g, C(done ? Theme.Good : Theme.Accent), new RectangleF(bar.X, bar.Y, (float)(bar.Width * on / total * Appear), 3), 1.5f);
             }
             g.Restore(state);
         }
+    }
+}
+
+/// <summary>
+/// Профиль одной строкой: «WT1-…». Каждая включённая настройка — 3 байта хеша её названия (FNV-1a),
+/// всё в base64url. Скинул другу в мессенджер — он вставил и получил те же отметки.
+/// </summary>
+static class ProfileCode
+{
+    const string Prefix = "WT1-";
+
+    static uint Hash(string s)
+    {
+        uint h = 2166136261;
+        foreach (char ch in s)
+        {
+            h ^= ch;
+            h *= 16777619;
+        }
+        return h & 0xFFFFFF;
+    }
+
+    public static string Encode(IEnumerable<Tweak> on)
+    {
+        var bytes = new List<byte>();
+        foreach (var t in on)
+        {
+            uint h = Hash(t.Name);
+            bytes.Add((byte)(h >> 16));
+            bytes.Add((byte)(h >> 8));
+            bytes.Add((byte)h);
+        }
+        return Prefix + Convert.ToBase64String(bytes.ToArray()).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    }
+
+    /// <summary>null — строка не похожа на код профиля.</summary>
+    public static List<Tweak>? Decode(string? code, IEnumerable<Tweak> all)
+    {
+        code = code?.Trim();
+        if (code == null || !code.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        string b64 = code[Prefix.Length..].Replace('-', '+').Replace('_', '/');
+        b64 = b64.PadRight(b64.Length + (4 - b64.Length % 4) % 4, '=');
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(b64); }
+        catch { return null; }
+        var wanted = new HashSet<uint>();
+        for (int i = 0; i + 2 < bytes.Length; i += 3)
+            wanted.Add((uint)(bytes[i] << 16 | bytes[i + 1] << 8 | bytes[i + 2]));
+        return all.Where(t => wanted.Contains(Hash(t.Name))).ToList();
     }
 }

@@ -24,6 +24,8 @@ public class Tweak
     public Action? Revert { get; init; }
     /// <summary>Для точного отката того, что меняется не через Reg (службы, схема питания, DNS).</summary>
     public Func<string>? Snapshot { get; init; }
+    /// <summary>«Что именно меняется»: ключи реестра и команды — показывается до применения.</summary>
+    public string? Details { get; init; }
     public Action<string>? Restore { get; init; }
 }
 
@@ -117,6 +119,17 @@ public static class Shell
         p.WaitForExit();
         _ = err.Result;
         return output;
+    }
+
+    /// <summary>Запуск с кодом возврата (вывод не нужен).</summary>
+    public static int RunCode(string file, string args)
+    {
+        var psi = new ProcessStartInfo(file, args) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        using var p = Process.Start(psi)!;
+        p.StandardOutput.ReadToEnd();
+        p.StandardError.ReadToEnd();
+        p.WaitForExit();
+        return p.ExitCode;
     }
 
     public static string PS(string script) =>

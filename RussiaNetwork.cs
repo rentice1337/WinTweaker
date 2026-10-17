@@ -30,6 +30,7 @@ public static class RussiaNetwork
         yield return Dns(G2, "Google 8.8.8.8", "Надёжный DNS от Google.", "8.8.8.8", "8.8.4.4");
         yield return Dns(G2, "Quad9", "DNS с блокировкой вредоносных сайтов.", "9.9.9.9", "149.112.112.112");
         yield return Dns(G2, "AdGuard DNS", "Блокирует рекламу и трекеры на уровне DNS.", "94.140.14.14", "94.140.15.15");
+        yield return Dns(G2, "Яндекс DNS", "Серверы в России — обычно самый низкий пинг у российских провайдеров. Базовый режим, без фильтрации.", "77.88.8.8", "77.88.8.1");
 
         // ── Защита и проверка ──
         const string G3 = "Защита и проверка";
@@ -42,6 +43,8 @@ public static class RussiaNetwork
         yield return new Tweak
         {
             Category = C, Group = G3, Name = "Шифрование DNS в браузерах (DoH)",
+            Details = "Политики браузеров:\n  [HKLM\\SOFTWARE\\Policies\\Google\\Chrome] и [...\\Microsoft\\Edge]\n    DnsOverHttpsMode = \"secure\"\n    DnsOverHttpsTemplates = \"https://cloudflare-dns.com/dns-query\"\n" +
+                      "  [HKLM\\SOFTWARE\\Policies\\Mozilla\\Firefox\\DNSOverHTTPS]\n    Enabled = 1, ProviderURL = …\n\nОтменить — удалить эти параметры.",
             Description = "Chrome, Edge и Firefox будут получать адреса сайтов через зашифрованный DNS Cloudflare — провайдер не сможет подменить ответ " +
                           "(частый способ блокировки). В браузере появится «Управляется организацией» — это нормально. Перезапустите браузер.\n\n" +
                           "Не совмещайте с Comss/Xbox DNS: браузер будет обращаться мимо них.",
@@ -85,6 +88,8 @@ public static class RussiaNetwork
     static Tweak Dns(string group, string name, string desc, string p1, string p2) => new()
     {
         Category = C, Group = group, Name = name, Description = desc + $"\n\nСерверы: {p1}, {p2}." + DnsNote,
+        Details = $"PowerShell, для всех подключённых адаптеров:\n  Set-DnsClientServerAddress -ServerAddresses ('{p1}','{p2}')\n  ipconfig /flushdns\n\n" +
+                  "Отменить: вернуть DNS, которые были на каждом адаптере до применения (снимок в журнале), иначе — DNS от провайдера (DHCP).",
         IsApplied = () => DnsCache.Current.Contains(p1),
         Snapshot = DnsSnapshot,
         Restore = DnsRestore,
