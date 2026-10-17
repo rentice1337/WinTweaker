@@ -168,7 +168,6 @@ sealed class TrayWheel : LayeredForm
     static readonly Font IconF = new("Segoe MDL2 Assets", 13f), IconS = new("Segoe MDL2 Assets", 10f);
     static readonly Font LabelF = new("Segoe UI Semibold", 7.75f), BigF = new("Segoe UI Semibold", 17f),
         MidF = new("Segoe UI Semibold", 10f), SmallF = new("Segoe UI", 7.75f), PillF = new("Segoe UI", 8.75f);
-    static readonly Dictionary<string, Bitmap> slotCache = new();
 
     readonly MainForm main;
     readonly WheelCmd[] defaults;
@@ -211,7 +210,7 @@ sealed class TrayWheel : LayeredForm
         if (WheelSettings.Centered) at = new Point(area.Left + area.Width / 2, area.Top + area.Height / 2);
         Location = new Point(Math.Clamp(at.X - px / 2, area.Left, Math.Max(area.Left, area.Right - px)),
                              Math.Clamp(at.Y - px / 2, area.Top, Math.Max(area.Top, area.Bottom - px)));
-        games = GameLibrary.Games.Where(g => g.Exe != null).Take(gamesMax).ToList();
+        games = GameLibrary.ForWheel(gamesMax); // свой список из настроек или первые из «Моих игр»
         hint = Tray.Current;
         try { hint = Hints.Compute(main); } catch { }
         defaults = Defaults();
@@ -314,7 +313,7 @@ sealed class TrayWheel : LayeredForm
         list.Add(new WheelCmd("Кэш шейдеров", "Шейдеры", "", "в игровом центре", () => main.OpenPage(MainForm.GamesPageName), Rank: 1));
         foreach (var (cat, glyph) in MainForm.Pages)
             list.Add(new WheelCmd(cat, cat, glyph, "раздел", () => main.OpenPage(cat), Rank: 1));
-        foreach (var g in GameLibrary.Games.Where(g => g.Exe != null))
+        foreach (var g in GameLibrary.Shown)
         {
             var game = g;
             list.Add(new WheelCmd(g.Title, g.Title, "", "запустить · " + g.Source, () => GameLibrary.Launch(game), Rank: 2));
@@ -758,51 +757,27 @@ sealed class TrayWheel : LayeredForm
             float sz = (float)((hot ? 64 : 54) * Motion.ExpoOut(pk));
             var rect = new RectangleF(c.X - sz / 2, c.Y - sz / 2, sz, sz);
             if (hot) Theme.Glow(g, Theme.Accent, rect, sz / 2, 3, 3f, 90);
-            var img = Slot(games[k]);
-            var st = g.Save();
-            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
-            using (var ia = new ImageAttributes())
+            // монета готовится точно под размер со сглаженным краем; во время появления — плавно масштабируется
+            int d = hot ? 64 : 54;
+            var img = GameArt.Coin(games[k], d);
+            if (Math.Abs(sz - d) < 0.5f) GameArt.Blit(g, img, (int)Math.Round(c.X - d / 2f), (int)Math.Round(c.Y - d / 2f), pk);
+            else
             {
-                var cm = new ColorMatrix { Matrix33 = (float)pk };
-                ia.SetColorMatrix(cm);
-                g.DrawImage(img, Rectangle.Round(rect), 0, 0, img.Width, img.Height, GraphicsUnit.Pixel, ia);
+                var st = g.Save();
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                using (var ia = new ImageAttributes())
+                {
+                    ia.SetColorMatrix(new ColorMatrix { Matrix33 = (float)pk });
+                    g.DrawImage(img, Rectangle.Round(rect), 0, 0, img.Width, img.Height, GraphicsUnit.Pixel, ia);
+                }
+                g.Restore(st);
             }
-            g.Restore(st);
             using var pen = new Pen(hot ? Theme.Accent : Color.FromArgb((int)(70 * pk), 255, 255, 255), hot ? 2f : 1f);
             g.DrawEllipse(pen, rect);
             if (GameWatcher.Current?.Exe.Equals(games[k].Exe, StringComparison.OrdinalIgnoreCase) == true)
                 Theme.Fill(g, Theme.Warn, new RectangleF(rect.Right - 12, rect.Top + 2, 10, 10), 5);
         }
-    }
-
-    /// <summary>Круглая «монета» игры: центр обложки или значок exe (кэшируется).</summary>
-    static Bitmap Slot(InstalledGame game)
-    {
-        string key = (game.Exe ?? game.Dir) + (game.Cover != null ? "#c" : "");
-        if (slotCache.TryGetValue(key, out var bmp)) return bmp;
-        const int D = 72;
-        bmp = new Bitmap(D, D, PixelFormat.Format32bppPArgb);
-        using (var g = Graphics.FromImage(bmp))
-        {
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            using var clip = new GraphicsPath();
-            clip.AddEllipse(0, 0, D - 1, D - 1);
-            g.SetClip(clip);
-            if (game.Cover != null)
-            {
-                int side = game.Cover.Height;
-                g.DrawImage(game.Cover, new Rectangle(0, 0, D, D), new Rectangle((game.Cover.Width - side) / 2, 0, side, side), GraphicsUnit.Pixel);
-            }
-            else
-            {
-                using (var lg = new LinearGradientBrush(new Rectangle(0, 0, D, D), Theme.Lerp(Theme.Card, Theme.Accent, 0.4), Theme.Lerp(Theme.Bg, Theme.Accent, 0.1), 45f))
-                    g.FillRectangle(lg, 0, 0, D, D);
-                if (game.Icon != null) g.DrawImage(game.Icon, D / 2 - 18, D / 2 - 18, 36, 36);
-            }
-        }
-        slotCache[key] = bmp;
-        return bmp;
     }
 
     void DrawPill(Graphics g, double p)

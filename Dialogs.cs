@@ -48,7 +48,36 @@ static class AppSettings
     }
 }
 
-/// <summary>Общая основа для окон без рамки: скругление, тень, сглаживание.</summary>
+/// <summary>
+/// Углы окон без лесенки. Обрезка окна регионом (Region) не сглаживается — по краю видны ступеньки.
+/// Windows 11 умеет скруглять окна сама, гладко и с тенью; на Windows 10 такого нет — там углы прямые с тонкой рамкой,
+/// как у системных окон.
+/// </summary>
+static class WinCorners
+{
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int value, int size);
+
+    /// <summary>Windows 11 (сборка 22000+) — скругляет сама.</summary>
+    public static readonly bool Native = Environment.OSVersion.Version.Build >= 22000;
+    /// <summary>Радиус для рамки, которую рисует само окно: 0 — прямые углы (Windows 10).</summary>
+    public static float Radius => Native ? 8 : 0;
+
+    public static void Apply(Form f, Color border)
+    {
+        if (!Native || !f.IsHandleCreated) return;
+        try
+        {
+            int round = 2; // DWMWCP_ROUND
+            DwmSetWindowAttribute(f.Handle, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, ref round, 4);
+            int color = border.R | border.G << 8 | border.B << 16;
+            DwmSetWindowAttribute(f.Handle, 34 /* DWMWA_BORDER_COLOR */, ref color, 4);
+        }
+        catch { }
+    }
+}
+
+/// <summary>Общая основа для окон без рамки: гладкие углы, тень.</summary>
 abstract class RoundForm : Form
 {
     protected RoundForm()
@@ -70,20 +99,18 @@ abstract class RoundForm : Form
         }
     }
 
-    protected override void OnSizeChanged(EventArgs e)
+    protected override void OnHandleCreated(EventArgs e)
     {
-        base.OnSizeChanged(e);
-        using var p = Theme.Round(new RectangleF(0, 0, Width, Height), 12);
-        Region = new Region(p);
+        base.OnHandleCreated(e);
+        WinCorners.Apply(this, Theme.Line);
     }
 
     protected override void OnPaintBackground(PaintEventArgs e)
     {
         e.Graphics.Clear(Theme.Card);
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        if (WinCorners.Native) return; // рамку и скругление рисует Windows 11
         using var pen = new Pen(Theme.Line);
-        using var path = Theme.Round(new RectangleF(0.5f, 0.5f, Width - 2, Height - 2), 12);
-        e.Graphics.DrawPath(pen, path);
+        e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
     }
 }
 

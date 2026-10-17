@@ -36,12 +36,14 @@ public partial class MainForm
         GameMode.Init();
         GameWatcher.Start();
         GameMode.Changed += () => { if (gameBanner is { IsDisposed: false }) gameBanner.Sync(); };
-        GameLibrary.Changed += () =>
+        void RefreshLibrary()
         {
             if (libWidget is not { IsDisposed: false }) return;
-            libWidget.SetData(GameLibrary.Games);
+            libWidget.SetData(GameLibrary.Shown, GameLibrary.Hidden);
             if (selected == GamesHub) Relayout();
-        };
+        }
+        GameLibrary.Changed += RefreshLibrary;
+        GamePrefs.Changed += RefreshLibrary; // скрыли, закрепили, переименовали, сменили обложку
         GameWatcher.Started += run =>
         {
             // статистика: средний FPS за сессию и график для отчёта после игры
@@ -96,10 +98,19 @@ public partial class MainForm
 
         // ── библиотека ──
         var lib = new LibraryWidget();
-        lib.SetData(GameLibrary.Games);
+        lib.SetData(GameLibrary.Shown, GameLibrary.Hidden);
         lib.GameClicked += OpenGame;
+        lib.EditClicked += EditGame;
+        int libH = lib.Height;
+        lib.Resize += (_, _) =>
+        {
+            // режим «Изменить» добавляет блок «Скрытые» — карточки ниже сдвигаются
+            if (lib.Height == libH) return;
+            libH = lib.Height;
+            if (selected == GamesHub && IsHandleCreated) BeginInvoke(() => Relayout());
+        };
         lib.Add.Click += async (_, _) => await AddGame();
-        lib.Rescan.Click += async (_, _) => { await GameLibrary.ScanAsync(); Toast.Pop(this, $"Найдено игр: {GameLibrary.Games.Count}", Tone.Info); };
+        lib.Rescan.Click += async (_, _) => { await GameLibrary.ScanAsync(); Toast.Pop(this, $"Найдено игр: {GameLibrary.Shown.Count + GameLibrary.Hidden.Count}", Tone.Info); };
         cv.Controls.Add(lib);
         libWidget = lib;
         cv.Controls.Add(new StatsWidget(GameStats.Load()));
@@ -280,9 +291,14 @@ public partial class MainForm
         using var d = new GameDialog(g, IsOnOrMarked) { MarkSystem = MarkTweaks };
         d.ShowDialog(this);
         if (!d.Changed) return;
-        if (g.Custom && g.Exe != null && !File.Exists(g.Exe)) { _ = GameLibrary.ScanAsync(); return; }
         Task.Run(g.CheckTuned).ContinueWith(_ => BeginInvoke(() => libWidget?.Invalidate(false)));
-        if (g.Custom) _ = GameLibrary.ScanAsync(); // «Убрать» — обновить список
+        if (g.Variants.Any(v => v.Custom)) _ = GameLibrary.ScanAsync(); // могли «Убрать» — обновить список
+    }
+
+    void EditGame(InstalledGame g)
+    {
+        using var d = new GameEditDialog(g);
+        d.ShowDialog(this);
     }
 
     async Task AddGame()
@@ -296,7 +312,8 @@ public partial class MainForm
         if (ofd.ShowDialog(this) != DialogResult.OK) return;
         GameLibrary.AddCustom(ofd.FileName);
         await GameLibrary.ScanAsync();
-        var g = GameLibrary.Games.FirstOrDefault(x => string.Equals(x.Exe, ofd.FileName, StringComparison.OrdinalIgnoreCase));
+        var g = GameLibrary.Shown.Concat(GameLibrary.Hidden).FirstOrDefault(x => x.Variants.Any(v => string.Equals(v.Exe, ofd.FileName, StringComparison.OrdinalIgnoreCase)));
+        if (g != null && GamePrefs.IsHidden(g.Key)) GamePrefs.SetHidden(g.Key, false); // добавили вручную — значит, нужна
         if (g != null) OpenGame(g);
     }
 

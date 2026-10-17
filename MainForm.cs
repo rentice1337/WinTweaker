@@ -147,11 +147,10 @@ public partial class MainForm : Form
         };
     }
 
-    protected override void OnSizeChanged(EventArgs e)
+    protected override void OnHandleCreated(EventArgs e)
     {
-        base.OnSizeChanged(e);
-        using var p = Theme.Round(new RectangleF(0, 0, Width, Height), 12);
-        Region = new Region(p);
+        base.OnHandleCreated(e);
+        WinCorners.Apply(this, Theme.Line); // Windows 11 — гладкое скругление; Windows 10 — прямые углы без лесенки
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)

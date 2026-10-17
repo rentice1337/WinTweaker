@@ -29,8 +29,25 @@ sealed class InstalledGame
     }
 
     public string ExeName => Exe != null ? Path.GetFileName(Exe) : "";
-    public string Title => Info?.Name ?? Name;
+    /// <summary>Название без правок пользователя.</summary>
+    public string BaseTitle => Info?.Name ?? Name;
+    /// <summary>Ключ игры: один для всех копий из разных лаунчеров (по нему хранятся правки).</summary>
+    public string Key => GamePrefs.KeyOf(BaseTitle);
+    /// <summary>Название на экране: своё, если задано.</summary>
+    public string Title => GamePrefs.NameOf(Key) ?? BaseTitle;
     public int CoverId => SteamId > 0 ? SteamId : Info?.SteamId ?? 0;
+
+    List<InstalledGame>? variants;
+    /// <summary>Все копии этой игры (Steam, EA app, вручную…); первая — та, что запускается.</summary>
+    public IReadOnlyList<InstalledGame> Variants => variants ?? (IReadOnlyList<InstalledGame>)new[] { this };
+    internal void SetVariants(List<InstalledGame> list) => variants = list;
+    /// <summary>Откуда игра: «Steam» или «Steam · EA app · Вручную».</summary>
+    public string Sources => string.Join(" · ", Variants.Select(v => v.Source).Distinct());
+
+    /// <summary>Обложка на экране: своя, затем своя у любой из копий.</summary>
+    public Image? ShownCover => GamePrefs.CoverOf(Key) ?? Variants.Select(v => v.Cover).FirstOrDefault(c => c != null);
+    public Image? ShownIcon => Variants.Select(v => v.Icon).FirstOrDefault(c => c != null);
+    public bool AnyTuned => Variants.Any(v => v.Tuned);
 }
 
 /// <summary>
@@ -45,7 +62,41 @@ static class GameLibrary
     static readonly string CoverDir = Path.Combine(Data, "covers");
     static readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(8) };
 
+    /// <summary>Все найденные копии игр — для распознавания запущенной игры (скрытые тоже).</summary>
     public static List<InstalledGame> Games { get; private set; } = new();
+
+    /// <summary>Игры для показа: копии из разных лаунчеров склеены, скрытые убраны, порядок — как у пользователя.</summary>
+    public static List<InstalledGame> Shown => View().Where(g => !GamePrefs.IsHidden(g.Key)).ToList();
+    public static List<InstalledGame> Hidden => View().Where(g => GamePrefs.IsHidden(g.Key)).ToList();
+
+    /// <summary>Игры для кольца пульта: свой список или первые из показанных.</summary>
+    public static List<InstalledGame> ForWheel(int max)
+    {
+        var all = View();
+        if (GamePrefs.Wheel is { } keys)
+            return keys.Select(k => all.FirstOrDefault(g => g.Key == k)).OfType<InstalledGame>().Take(max).ToList();
+        return all.Where(g => !GamePrefs.IsHidden(g.Key)).Take(max).ToList();
+    }
+
+    static List<InstalledGame> View()
+    {
+        var list = Games.Where(g => g.Exe != null).ToList();
+        var groups = new List<InstalledGame>();
+        foreach (var grp in list.GroupBy(g => g.Key))
+        {
+            var copies = grp.ToList();
+            // запускается выбранный лаунчер, иначе первый найденный (Steam/Epic/EA точнее, вручную — последним)
+            var pref = GamePrefs.LauncherOf(grp.Key);
+            var ordered = copies.OrderBy(c => pref != null && c.Source == pref ? 0 : 1).ThenBy(c => c.Custom ? 1 : 0).ThenBy(c => copies.IndexOf(c)).ToList();
+            var main = ordered[0];
+            main.SetVariants(ordered);
+            groups.Add(main);
+        }
+        var baseIdx = groups.Select((g, i) => (g, i)).ToDictionary(x => x.g, x => x.i);
+        return groups.OrderBy(g => GamePrefs.IsPinned(g.Key) ? 0 : 1)
+            .ThenBy(g => GamePrefs.OrderOf(g.Key))
+            .ThenBy(g => baseIdx[g]).ToList();
+    }
     public static bool Scanned { get; private set; }
     public static event Action? Changed;
 
@@ -566,34 +617,66 @@ static class GameLibrary
         return null;
     }
 
-    /// <summary>Загрузить и сразу уменьшить до размера плитки: файл не блокируется, рисовать дёшево.</summary>
-    static Image? Load(string file)
+    static Image? Load(string file) => LoadCover(file);
+
+    /// <summary>
+    /// Загрузить обложку и обрезать по центру под пропорции плитки. Храним в двойном размере (как header.jpg Steam, 460×215):
+    /// плитки и окна на экранах с масштабом больше 100% остаются чёткими. Файл не блокируется.
+    /// </summary>
+    public static Image? LoadCover(string file)
     {
         try
         {
             using var ms = new MemoryStream(File.ReadAllBytes(file));
             using var src = Image.FromStream(ms);
-            var bmp = new Bitmap(CoverW, CoverH, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+            int tw = CoverW * 2, th = CoverH * 2;
+            var bmp = new Bitmap(tw, th, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
             using var g = Graphics.FromImage(bmp);
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            // обрезка «по центру» под пропорции плитки
-            float scale = Math.Max((float)CoverW / src.Width, (float)CoverH / src.Height);
-            float w = src.Width * scale, h = src.Height * scale;
-            g.DrawImage(src, (CoverW - w) / 2, (CoverH - h) / 2, w, h);
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            float scale = Math.Max((float)tw / src.Width, (float)th / src.Height);
+            float sw = tw / scale, sh = th / scale;
+            using var ia = new System.Drawing.Imaging.ImageAttributes();
+            ia.SetWrapMode(WrapMode.TileFlipXY);
+            g.DrawImage(src, new Rectangle(0, 0, tw, th), (src.Width - sw) / 2, (src.Height - sh) / 2, sw, sh, GraphicsUnit.Pixel, ia);
             return bmp;
         }
         catch { return null; }
     }
 
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern uint PrivateExtractIcons(string file, int index, int cx, int cy, IntPtr[] icons, int[] ids, uint count, uint flags);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr h);
+
+    /// <summary>Значок exe в большом размере (256 px, если он есть в файле) — раньше брался 32 px и расплывался на плитке.</summary>
     static Image? IconOf(string exe)
     {
-        using var icon = System.Drawing.Icon.ExtractAssociatedIcon(exe);
-        if (icon == null) return null;
-        using var big = icon.ToBitmap();
-        var bmp = new Bitmap(32, 32);
-        using var g = Graphics.FromImage(bmp);
-        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        g.DrawImage(big, 0, 0, 32, 32);
-        return bmp;
+        const int S = 128;
+        Bitmap? big = null;
+        foreach (int size in new[] { 256, 128, 64, 48 })
+        {
+            var h = new IntPtr[1];
+            var ids = new int[1];
+            if (PrivateExtractIcons(exe, 0, size, size, h, ids, 1, 0) == 0 || h[0] == IntPtr.Zero) continue;
+            try { using var ic = System.Drawing.Icon.FromHandle(h[0]); big = ic.ToBitmap(); }
+            catch { }
+            finally { DestroyIcon(h[0]); }
+            if (big != null) break;
+        }
+        if (big == null)
+        {
+            using var icon = System.Drawing.Icon.ExtractAssociatedIcon(exe);
+            if (icon == null) return null;
+            big = icon.ToBitmap();
+        }
+        using (big)
+        {
+            var bmp = new Bitmap(S, S, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+            using var g = Graphics.FromImage(bmp);
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.DrawImage(big, 0, 0, S, S);
+            return bmp;
+        }
     }
 }

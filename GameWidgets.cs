@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 
 namespace WinTweaker;
 
@@ -238,40 +239,80 @@ class ReadyWidget : Widget
 
 class LibraryWidget : Widget
 {
-    public readonly FlatBtn Add = new("", "Добавить игру");
-    public readonly FlatBtn Rescan = new("", "");
+    public readonly FlatBtn Add = new("", "Добавить игру");
+    public readonly FlatBtn Rescan = new("", "");
+    public readonly FlatBtn Edit = new("", "Изменить");
+    public readonly FlatBtn ResetOrder = new("", "Порядок по умолчанию");
+    /// <summary>Клик по игре вне режима правки — настройки игры.</summary>
     public event Action<InstalledGame>? GameClicked;
-    List<InstalledGame> games = new();
-    int hover = -1;
+    /// <summary>Клик по игре в режиме правки — название, обложка, лаунчер.</summary>
+    public event Action<InstalledGame>? EditClicked;
+
+    List<InstalledGame> games = new(), hidden = new();
+    bool editing;
+    int hover = -1, hoverBtn = -1;      // hover: индекс плитки (скрытые — с 10000); hoverBtn: 0 закрепить, 1 скрыть/вернуть
     readonly AnimFloat lift;
-    const int Gap = 14, CapH = 50;
+    const int Gap = 14, CapH = 50, Btn = 30, HiddenBase = 10000;
+
+    // перетаскивание
+    int pressIdx = -1, dropIdx = -1;
+    Point pressAt, dragAt, grabOffset;
+    bool dragging;
+
+    public bool Editing => editing;
 
     public LibraryWidget() : base("Мои игры", 200)
     {
         Wide = true;
+        Edit.Width = TextRenderer.MeasureText("Изменить", Theme.Semi).Width + 46;
+        ResetOrder.Visible = false;
         Controls.Add(Add);
         Controls.Add(Rescan);
+        Controls.Add(Edit);
+        Controls.Add(ResetOrder);
+        Edit.Click += (_, _) => SetEditing(!editing);
+        ResetOrder.Click += (_, _) => GamePrefs.ResetOrder();
         lift = new AnimFloat(0, () => Invalidate(false));
         Cursor = Cursors.Default;
     }
 
-    public void SetData(List<InstalledGame> list)
+    public void SetEditing(bool on)
     {
-        games = list;
+        if (editing == on) return;
+        editing = on;
+        dragging = false;
+        pressIdx = -1;
+        Edit.Text = on ? "Готово" : "Изменить";
+        ResetOrder.Visible = on;
+        Relayout();
+        PerformLayout();
+        Invalidate(true);
+    }
+
+    public void SetData(List<InstalledGame> shown, List<InstalledGame> hiddenGames)
+    {
+        games = shown;
+        hidden = hiddenGames;
+        if (hover >= games.Count && hover < HiddenBase || hover >= HiddenBase + hidden.Count) hover = -1;
         Relayout();
         Invalidate(true);
     }
 
     int Cols => Math.Max(1, (Width - 24 + Gap) / (GameLibrary.CoverW + Gap));
     int TileW => (Width - 24 - Gap * (Cols - 1)) / Cols;
-    int TileH => (int)(TileW * GameLibrary.CoverH / (float)GameLibrary.CoverW) + CapH;
+    int CoverH => (int)(TileW * GameLibrary.CoverH / (float)GameLibrary.CoverW);
+    int TileH => CoverH + CapH;
     int GridTop => HeadH + 56;
+    int Rows(int n) => Math.Max(1, (n + Cols - 1) / Cols);
+    int GridBottom => GridTop + Rows(games.Count) * (TileH + Gap) - Gap;
+    bool ShowHidden => editing && hidden.Count > 0;
+    int HiddenTop => GridBottom + 46;
 
     void Relayout()
     {
         int n = GameLibrary.Scanned ? games.Count : 4;
-        int rows = Math.Max(1, (n + Cols - 1) / Cols);
-        int h = n == 0 ? GridTop + 70 : GridTop + rows * (TileH + Gap) - Gap + 12;
+        int h = n == 0 ? GridTop + 70 : GridTop + Rows(n) * (TileH + Gap) - Gap + 12;
+        if (GameLibrary.Scanned && ShowHidden) h = HiddenTop + Rows(hidden.Count) * (TileH + Gap) - Gap + 12;
         if (Height != h) Height = h;
     }
 
@@ -284,28 +325,94 @@ class LibraryWidget : Widget
     protected override void OnLayout(LayoutEventArgs e)
     {
         base.OnLayout(e);
-        if (Add is null || Rescan is null) return;
-        Rescan.Location = new Point(Width - Rescan.Width - 12, HeadH + 12);
-        Add.Location = new Point(Rescan.Left - Add.Width - 8, HeadH + 12);
+        if (Add is null || Rescan is null || Edit is null || ResetOrder is null) return;
+        int y = HeadH + 12;
+        Rescan.Location = new Point(Width - Rescan.Width - 12, y);
+        Add.Location = new Point(Rescan.Left - Add.Width - 8, y);
+        Edit.Location = new Point(Add.Left - Edit.Width - 8, y);
+        ResetOrder.Location = new Point(Edit.Left - ResetOrder.Width - 8, y);
     }
 
-    Rectangle TileRect(int i)
+    Rectangle Slot(int i, int top)
     {
         int c = i % Cols, row = i / Cols;
-        return new Rectangle(12 + c * (TileW + Gap), GridTop + row * (TileH + Gap), TileW, TileH);
+        return new Rectangle(12 + c * (TileW + Gap), top + row * (TileH + Gap), TileW, TileH);
+    }
+
+    Rectangle TileRect(int i) => i >= HiddenBase ? Slot(i - HiddenBase, HiddenTop) : Slot(i, GridTop);
+
+    /// <summary>Кнопки на обложке в режиме правки: справа сверху, справа налево — «скрыть/вернуть», «закрепить».</summary>
+    Rectangle BtnRect(Rectangle tile, int which) => new(tile.Right - 8 - Btn - which * (Btn + 6), tile.Top + 8, Btn, Btn);
+
+    int HitTile(Point p)
+    {
+        if (!GameLibrary.Scanned) return -1;
+        for (int i = 0; i < games.Count; i++) if (TileRect(i).Contains(p)) return i;
+        if (ShowHidden)
+            for (int i = 0; i < hidden.Count; i++) if (TileRect(HiddenBase + i).Contains(p)) return HiddenBase + i;
+        return -1;
+    }
+
+    int HitBtn(int tile, Point p)
+    {
+        if (!editing || tile < 0) return -1;
+        var t = TileRect(tile);
+        if (BtnRect(t, 0).Contains(p)) return 1;                       // скрыть / вернуть
+        if (tile < HiddenBase && BtnRect(t, 1).Contains(p)) return 0;  // закрепить
+        return -1;
+    }
+
+    InstalledGame? GameAt(int i) => i < 0 ? null : i >= HiddenBase ? hidden.ElementAtOrDefault(i - HiddenBase) : games.ElementAtOrDefault(i);
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.Button != MouseButtons.Left) return;
+        int t = HitTile(e.Location);
+        if (t < 0) return;
+        pressIdx = t;
+        pressAt = e.Location;
+        var r = TileRect(t);
+        grabOffset = new Point(e.X - r.X, e.Y - r.Y);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
-        int h = -1;
-        if (GameLibrary.Scanned)
-            for (int i = 0; i < games.Count; i++) if (TileRect(i).Contains(e.Location)) { h = i; break; }
-        if (h != hover)
+        if (pressIdx >= 0 && pressIdx < HiddenBase && editing && (e.Button & MouseButtons.Left) != 0 && HitBtn(pressIdx, pressAt) < 0)
         {
+            if (!dragging && (Math.Abs(e.X - pressAt.X) > 6 || Math.Abs(e.Y - pressAt.Y) > 6))
+            {
+                dragging = true;
+                Capture = true;
+                Cursor = Cursors.SizeAll;
+            }
+            if (dragging)
+            {
+                dragAt = e.Location;
+                var center = new Point(e.X - grabOffset.X + TileW / 2, e.Y - grabOffset.Y + TileH / 2);
+                int best = 0;
+                double bd = double.MaxValue;
+                for (int i = 0; i < games.Count; i++)
+                {
+                    var r = Slot(i, GridTop);
+                    double dx = center.X - (r.X + r.Width / 2.0), dy = center.Y - (r.Y + r.Height / 2.0);
+                    double dd = dx * dx + dy * dy;
+                    if (dd < bd) { bd = dd; best = i; }
+                }
+                dropIdx = best;
+                Invalidate(false);
+                base.OnMouseMove(e);
+                return;
+            }
+        }
+        int h = HitTile(e.Location);
+        int hb = HitBtn(h, e.Location);
+        if (h != hover || hb != hoverBtn)
+        {
+            if (h != hover) { lift.Set(0); if (h >= 0) lift.To(1, 260); }
             hover = h;
+            hoverBtn = hb;
             Cursor = h >= 0 ? Cursors.Hand : Cursors.Default;
-            lift.Set(0);
-            if (h >= 0) lift.To(1, 260);
             Invalidate(false);
         }
         base.OnMouseMove(e);
@@ -313,23 +420,63 @@ class LibraryWidget : Widget
 
     protected override void OnMouseLeave(EventArgs e)
     {
-        if (hover != -1) { hover = -1; Invalidate(false); }
+        if (hover != -1 && !dragging) { hover = -1; hoverBtn = -1; Invalidate(false); }
         base.OnMouseLeave(e);
     }
 
-    protected override void OnMouseClick(MouseEventArgs e)
+    protected override void OnMouseUp(MouseEventArgs e)
     {
-        if (hover >= 0 && hover < games.Count && e.Button == MouseButtons.Left) GameClicked?.Invoke(games[hover]);
-        base.OnMouseClick(e);
+        base.OnMouseUp(e);
+        if (e.Button != MouseButtons.Left) return;
+        int pressed = pressIdx;
+        pressIdx = -1;
+        if (dragging)
+        {
+            dragging = false;
+            Capture = false;
+            Cursor = Cursors.Hand;
+            Drop(pressed, dropIdx);
+            return;
+        }
+        if (pressed < 0 || HitTile(e.Location) != pressed) return;
+        var game = GameAt(pressed);
+        if (game == null) return;
+        switch (HitBtn(pressed, e.Location))
+        {
+            case 0: GamePrefs.SetPinned(game.Key, !GamePrefs.IsPinned(game.Key)); return;
+            case 1: GamePrefs.SetHidden(game.Key, pressed < HiddenBase); return;
+        }
+        if (editing) EditClicked?.Invoke(game);
+        else GameClicked?.Invoke(game);
+    }
+
+    /// <summary>Отпустили плитку: новый порядок; брошенная среди закреплённых — закрепляется, после них — открепляется.</summary>
+    void Drop(int from, int to)
+    {
+        if (from < 0 || from >= games.Count || to < 0) { Invalidate(false); return; }
+        var list = games.ToList();
+        var g = list[from];
+        list.RemoveAt(from);
+        to = Math.Clamp(to, 0, list.Count);
+        int pinnedBefore = list.Count(x => GamePrefs.IsPinned(x.Key));
+        // на границе закреплённых и остальных — состояние не меняется
+        bool pin = to < pinnedBefore || (to == pinnedBefore && GamePrefs.IsPinned(g.Key));
+        list.Insert(to, g);
+        var pinned = list.Where(x => x == g ? pin : GamePrefs.IsPinned(x.Key)).Select(x => x.Key);
+        games = list;
+        GamePrefs.SetOrder(list.Select(x => x.Key), pinned);
     }
 
     protected override void PaintBody(Graphics g, Rectangle r)
     {
         var flags = TextFormatFlags.Left | TextFormatFlags.EndEllipsis;
+        int presets = games.Count(x => x.Variants.Any(v => v.Info != null));
         string sub = !GameLibrary.Scanned ? "Ищу игры в Steam, Epic Games, EA app, Battle.net, Riot и BSG…"
-            : games.Count == 0 ? "Игр не нашлось — добавьте exe вручную"
-            : $"Найдено: {games.Count} · с готовым пресетом: {games.Count(x => x.Info != null)} · нажмите на игру, чтобы настроить";
-        TextRenderer.DrawText(g, sub, Theme.Body, new Rectangle(r.Left + 18, r.Top + 18, Add.Left - r.Left - 30, 22), C(Theme.Muted), flags);
+            : editing ? "Тащите плитки, чтобы поменять порядок · клик по игре — название, обложка, лаунчер"
+            : games.Count == 0 && hidden.Count == 0 ? "Игр не нашлось — добавьте exe вручную"
+            : $"Игр: {games.Count} · с готовым пресетом: {presets}" + (hidden.Count > 0 ? $" · скрыто: {hidden.Count}" : "") + " · нажмите на игру, чтобы настроить";
+        int left = (ResetOrder.Visible ? ResetOrder.Left : Edit.Left) - r.Left - 30;
+        TextRenderer.DrawText(g, sub, Theme.Body, new Rectangle(r.Left + 18, r.Top + 18, left, 22), C(editing ? Theme.AccentHi : Theme.Muted), flags);
 
         if (!GameLibrary.Scanned)
         {
@@ -341,49 +488,85 @@ class LibraryWidget : Widget
             }
             return;
         }
-        for (int i = 0; i < games.Count; i++) Tile(g, games[i], TileRect(i), i == hover ? lift.Value : 0);
+
+        if (dragging && pressIdx >= 0 && pressIdx < games.Count)
+        {
+            // остальные плитки раздвигаются под место, куда бросят
+            var order = games.Where((_, i) => i != pressIdx).ToList();
+            for (int i = 0, slot = 0; i < order.Count; i++, slot++)
+            {
+                if (slot == dropIdx) slot++;
+                Tile(g, order[i], Slot(slot, GridTop), 0, i, false);
+            }
+            var hole = Slot(dropIdx, GridTop);
+            using (var pen = new Pen(Color.FromArgb(150, Theme.Accent), 1.5f) { DashStyle = DashStyle.Dash })
+            using (var path = Theme.Round(new RectangleF(hole.X + 0.5f, hole.Y + 0.5f, hole.Width - 1, hole.Height - 1), 12))
+                g.DrawPath(pen, path);
+            var at = new Rectangle(dragAt.X - grabOffset.X, dragAt.Y - grabOffset.Y, TileW, TileH);
+            Tile(g, games[pressIdx], at, 1, pressIdx, false);
+        }
+        else
+            for (int i = 0; i < games.Count; i++) Tile(g, games[i], TileRect(i), i == hover ? lift.Value : 0, i, false);
+
+        if (ShowHidden)
+        {
+            TextRenderer.DrawText(g, $"СКРЫТЫЕ · {hidden.Count}", Theme.Small, new Point(r.Left + 18, HiddenTop - 26), C(Theme.Muted));
+            TextRenderer.DrawText(g, "не видны в списке и на пульте; глаз — вернуть", Theme.Tiny,
+                new Point(r.Left + 18 + TextRenderer.MeasureText($"СКРЫТЫЕ · {hidden.Count}", Theme.Small).Width + 10, HiddenTop - 27), C(Theme.Dim));
+            for (int i = 0; i < hidden.Count; i++)
+                Tile(g, hidden[i], TileRect(HiddenBase + i), HiddenBase + i == hover ? lift.Value : 0, HiddenBase + i, true);
+        }
     }
 
-    void Tile(Graphics g, InstalledGame game, Rectangle t, double h)
+    void Tile(Graphics g, InstalledGame game, Rectangle t, double h, int index, bool isHidden)
     {
-        var rect = new RectangleF(t.X, t.Y - (float)(3 * h), t.Width, t.Height);
+        var rect = new Rectangle(t.X, t.Y - (int)Math.Round(3 * h), t.Width, t.Height);
         if (h > 0.01) Theme.Glow(g, Theme.Accent, rect, 12, 3, 2.5f, (int)(70 * h * Appear));
         using var path = Theme.Round(rect, 12);
         using (var b = new SolidBrush(Color.FromArgb((int)(220 * Appear), 20, 21, 29))) g.FillPath(b, path);
 
-        var cover = new RectangleF(rect.X, rect.Y, rect.Width, rect.Height - CapH);
-        var st = g.Save();
-        g.SetClip(path);
-        if (game.Cover != null)
-        {
-            g.InterpolationMode = InterpolationMode.Bilinear;
-            g.DrawImage(game.Cover, cover);
-        }
-        else
-        {
-            // своя «обложка»: градиент акцента и значок игры
-            using (var lg = new LinearGradientBrush(cover, Theme.Lerp(Theme.Card, Theme.Accent, 0.35), Theme.Lerp(Theme.Bg, Theme.Accent, 0.08), 35f))
-                g.FillRectangle(lg, cover);
-            if (game.Icon != null) g.DrawImage(game.Icon, cover.X + cover.Width / 2 - 20, cover.Y + cover.Height / 2 - 20, 40, 40);
-            else TextRenderer.DrawText(g, "", Theme.IconBig, Rectangle.Round(cover), Color.FromArgb(200, 255, 255, 255),
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-        }
-        if (Appear < 1) using (var veil = new SolidBrush(Color.FromArgb((int)(255 * (1 - Appear)), Theme.Bg))) g.FillRectangle(veil, cover);
-        g.Restore(st);
+        // обложка: готовая картинка точно под размер, со сглаженными углами — рисуется пиксель в пиксель
+        GameArt.Blit(g, GameArt.Cover(game, rect.Width, CoverH, 12, topOnly: true), rect.X, rect.Y, Appear * (isHidden ? 0.45 : 1));
 
         using (var pen = new Pen(Color.FromArgb((int)((26 + 120 * h) * Appear), Theme.Lerp(Color.White, Theme.Accent, h)))) g.DrawPath(pen, path);
 
+        bool pinned = !isHidden && GamePrefs.IsPinned(game.Key);
+        if (editing)
+        {
+            if (!isHidden) RoundBtn(g, BtnRect(rect, 1), pinned ? "" : "", pinned, index == hover && hoverBtn == 0);
+            RoundBtn(g, BtnRect(rect, 0), isHidden ? "" : "", false, index == hover && hoverBtn == 1);
+            if (index == hover && hoverBtn < 0 && !dragging)
+            {
+                // подсказка по центру обложки
+                var pill = new RectangleF(rect.X + rect.Width / 2f - 52, rect.Y + CoverH / 2f - 15, 104, 30);
+                Theme.Fill(g, Color.FromArgb(200, 12, 12, 18), pill, 15);
+                TextRenderer.DrawText(g, "", Theme.Icon, new Rectangle((int)pill.X + 10, (int)pill.Y, 20, 30), Color.White, TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, "Изменить", Theme.Semi, new Rectangle((int)pill.X + 32, (int)pill.Y, 70, 30), Color.White, TextFormatFlags.VerticalCenter);
+            }
+        }
+        else if (pinned)
+            RoundBtn(g, new Rectangle(rect.X + 8, rect.Y + 8, 26, 26), "", true, false);
+
         var flags = TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding;
-        int cy = (int)cover.Bottom + 8;
-        TextRenderer.DrawText(g, game.Title, Theme.Semi, new Rectangle((int)rect.X + 12, cy, (int)rect.Width - 24, 20), C(Theme.Text), flags);
-        int x = (int)rect.X + 12;
-        TextRenderer.DrawText(g, game.Source, Theme.Tiny, new Rectangle(x, cy + 21, 90, 18), C(Theme.Muted), flags);
-        int sw = Math.Min(90, TextRenderer.MeasureText(game.Source, Theme.Tiny).Width) + 8;
-        x += sw;
-        if (game.Tuned) x += GameUI.Chip(g, "НАСТРОЕНО", x, cy + 21, Theme.Good, Appear) + 4;
-        else if (game.Info != null) x += GameUI.Chip(g, "ПРЕСЕТ", x, cy + 21, Theme.Accent, Appear) + 4;
-        if (GameWatcher.Current?.Exe.Equals(game.Exe, StringComparison.OrdinalIgnoreCase) == true)
+        int cy = rect.Y + CoverH + 8;
+        TextRenderer.DrawText(g, game.Title, Theme.Semi, new Rectangle(rect.X + 12, cy, rect.Width - 24, 20), C(isHidden ? Theme.Muted : Theme.Text), flags);
+        int x = rect.X + 12;
+        string src = game.Sources;
+        int sw = Math.Min(rect.Width / 2, TextRenderer.MeasureText(src, Theme.Tiny).Width);
+        TextRenderer.DrawText(g, src, Theme.Tiny, new Rectangle(x, cy + 21, sw + 4, 18), C(Theme.Muted), flags);
+        x += sw + 8;
+        if (game.AnyTuned) x += GameUI.Chip(g, "НАСТРОЕНО", x, cy + 21, Theme.Good, Appear) + 4;
+        else if (game.Variants.Any(v => v.Info != null)) x += GameUI.Chip(g, "ПРЕСЕТ", x, cy + 21, Theme.Accent, Appear) + 4;
+        if (game.Variants.Any(v => GameWatcher.Current?.Exe.Equals(v.Exe, StringComparison.OrdinalIgnoreCase) == true))
             GameUI.Chip(g, "ИДЁТ", x, cy + 21, Theme.Warn, Appear);
+    }
+
+    void RoundBtn(Graphics g, Rectangle b, string glyph, bool on, bool hot)
+    {
+        var fill = on ? Theme.Accent : hot ? Color.FromArgb(235, 40, 42, 56) : Color.FromArgb(200, 12, 12, 18);
+        using (var br = new SolidBrush(Color.FromArgb((int)(fill.A * Appear), fill))) g.FillEllipse(br, b);
+        using (var pen = new Pen(Color.FromArgb((int)((hot ? 160 : 60) * Appear), 255, 255, 255))) g.DrawEllipse(pen, b);
+        TextRenderer.DrawText(g, glyph, Theme.Icon, b, C(Color.White), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }
 }
 
@@ -876,8 +1059,14 @@ class GameDialog : RoundForm
         apply.Click += async (_, _) => await ApplyRecommended();
         close.Click += (_, _) => Finish();
         folder.Click += (_, _) => { try { System.Diagnostics.Process.Start("explorer.exe", game.Exe != null ? $"/select,\"{game.Exe}\"" : $"\"{game.Dir}\""); } catch { } };
-        remove.Visible = game.Custom;
-        remove.Click += (_, _) => { if (game.Exe != null) GameLibrary.RemoveCustom(game.Exe); Changed = true; Finish(); };
+        // «Убрать» — копию, добавленную вручную (у склеенной игры она может быть не главной)
+        remove.Visible = game.Variants.Any(v => v.Custom);
+        remove.Click += (_, _) =>
+        {
+            foreach (var v in game.Variants.Where(v => v.Custom && v.Exe != null)) GameLibrary.RemoveCustom(v.Exe!);
+            Changed = true;
+            Finish();
+        };
         mark.Click += (_, _) =>
         {
             int n = MarkSystem?.Invoke(system.Where(s => !s.On).Select(s => s.Name).ToArray()) ?? 0;
@@ -954,24 +1143,13 @@ class GameDialog : RoundForm
 
         // шапка: обложка, название, источник, путь
         var cover = new RectangleF(Pad, Pad, GameLibrary.CoverW, GameLibrary.CoverH);
-        using (var path = Theme.Round(cover, 12))
-        {
-            var st = g.Save();
-            g.SetClip(path);
-            if (game.Cover != null) g.DrawImage(game.Cover, cover);
-            else
-            {
-                using var lg = new LinearGradientBrush(cover, Theme.Lerp(Theme.Card, Theme.Accent, 0.35), Theme.Lerp(Theme.Bg, Theme.Accent, 0.08), 35f);
-                g.FillRectangle(lg, cover);
-                if (game.Icon != null) g.DrawImage(game.Icon, cover.X + cover.Width / 2 - 20, cover.Y + cover.Height / 2 - 20, 40, 40);
-            }
-            g.Restore(st);
-            using var pen = new Pen(Color.FromArgb(40, 255, 255, 255));
+        GameArt.Blit(g, GameArt.Cover(game, GameLibrary.CoverW, GameLibrary.CoverH, 12, topOnly: false), Pad, Pad);
+        using (var path = Theme.Round(new RectangleF(cover.X + 0.5f, cover.Y + 0.5f, cover.Width - 1, cover.Height - 1), 12))
+        using (var pen = new Pen(Color.FromArgb(40, 255, 255, 255)))
             g.DrawPath(pen, path);
-        }
         int hx = Pad + GameLibrary.CoverW + 22;
         TextRenderer.DrawText(g, game.Title, Theme.F(15f, FontStyle.Bold), new Rectangle(hx, Pad - 2, Width - hx - Pad, 30), Theme.Text, flags);
-        string sub = game.Source + (game.Info != null ? " · готовый пресет" : " · общий пресет для любой игры");
+        string sub = game.Sources + (game.Info != null ? " · готовый пресет" : " · общий пресет для любой игры");
         TextRenderer.DrawText(g, sub, Theme.Body, new Rectangle(hx, Pad + 30, Width - hx - Pad, 20), game.Info != null ? Theme.Accent : Theme.Muted, flags);
         TextRenderer.DrawText(g, game.Exe ?? game.Dir, Theme.Tiny, new Rectangle(hx, Pad + 52, Width - hx - Pad, 18), Theme.Dim, flags | TextFormatFlags.PathEllipsis);
 

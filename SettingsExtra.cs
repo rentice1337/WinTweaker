@@ -17,6 +17,14 @@ public partial class MainForm
             Seg(new[] { "У курсора", "По центру" }, WheelSettings.Centered ? 1 : 0, v => WheelSettings.Centered = v == 1));
         card.AddCustom("Игр во втором кольце", "Сколько обложек показывать в «Играх»",
             Seg(new[] { "6", "8", "10" }, WheelSettings.Games switch { 6 => 0, 8 => 1, _ => 2 }, v => WheelSettings.Games = v switch { 0 => 6, 1 => 8, _ => 10 }));
+        var pickGames = new FlatBtn("\uE7FC", "Выбрать…");
+        pickGames.Click += (_, _) =>
+        {
+            using var d = new WheelGamesDialog();
+            if (d.ShowDialog(this) == DialogResult.OK)
+                Toast.Pop(this, GamePrefs.Wheel == null ? "На кольце — первые игры из «Моих игр»" : $"На кольце: {GamePrefs.Wheel.Count} игр", Tone.Success);
+        };
+        card.AddCustom("Игры на кольце", "Какие игры и в каком порядке — или автоматически первые из «Моих игр»", pickGames);
         card.Add("Подсказка под кольцом", "Одна главная подсказка «прямо сейчас»", () => WheelSettings.Hint, on => WheelSettings.Hint = on);
         var hk = new HotkeyBox(WheelSettings.Hotkey);
         hk.Changed += k =>
