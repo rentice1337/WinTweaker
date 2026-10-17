@@ -30,7 +30,7 @@ body:
     id: version
     attributes:
       label: Версия WinTweak
-      description: Видна внизу бокового меню.
+      description: Видна под логотипом слева вверху и в «Настройках».
       placeholder: "2.0.0"
     validations:
       required: true
