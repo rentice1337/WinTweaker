@@ -137,19 +137,6 @@ WinTweak не собирает и не отправляет данные о ва
 Создайте [issue](https://github.com/rentice1337/WinTweaker/issues/new/choose) — там есть шаблоны для ошибки и для идеи.
 </details>
 
-## Сборка из исходников
-
-Нужен [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
-
-```
-git clone https://github.com/rentice1337/WinTweaker.git
-cd WinTweaker
-dotnet publish WinTweaker.csproj -c Release -o publish
-```
-
-Готовый `publish\WinTweaker.exe` — один файл со всем необходимым. Можно просто запустить `build.bat`.
-Как устроен код и как добавить свою настройку — в [CONTRIBUTING.md](CONTRIBUTING.md).
-
 ## Лицензия
 
 [MIT](LICENSE) — свободное использование, изменение и распространение.
