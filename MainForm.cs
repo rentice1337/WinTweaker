@@ -109,6 +109,13 @@ public partial class MainForm : Form
         view.Dock = DockStyle.Fill;
         main.Controls.Add(view);
         main.Controls.Add(BuildTopBar());
+        // панель «Отмечено N изменений» поверх страницы, внизу по центру
+        main.Controls.Add(pendingBar);
+        pendingBar.BringToFront();
+        main.Resize += (_, _) => pendingBar.Reposition();
+        pendingBar.Apply.Click += async (_, _) => await ApplyAsync();
+        pendingBar.Review.Click += async (_, _) => await ApplyAsync();
+        pendingBar.Reset.Click += (_, _) => ResetPending();
         Controls.Add(main);
         Controls.Add(BuildSidebar());
 
@@ -135,6 +142,7 @@ public partial class MainForm : Form
         {
             cursorTimer.Start();
             await LoadStateAsync();
+            await FirstRunAsync();
             if (!GameLibrary.Scanned) _ = GameLibrary.ScanAsync(); // для автоопределения игр
             if (AppSettings.Get("updates", "1") == "1") _ = CheckUpdates(manual: false);
         };
@@ -1119,6 +1127,7 @@ public partial class MainForm : Form
         }
         else badge.SetStatus($"Изменений к применению: {n} — показать", Theme.Accent);
         applyBtn.Count = n;
+        pendingBar.Count = n;
         tabStrip?.Invalidate();
     }
 

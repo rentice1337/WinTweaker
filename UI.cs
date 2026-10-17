@@ -405,8 +405,8 @@ class Card : Surface
         int y = HeadH + 6;
         foreach (Control c in Controls)
         {
-            c.SetBounds(6, y, Width - 12, 38);
-            y += 38;
+            c.SetBounds(6, y, Width - 12, c.Height);
+            y += c.Height;
         }
         Height = y + 6;
     }
@@ -973,7 +973,7 @@ class TweakRow : Control
     {
         T = t;
         SetStyle(Theme.Smooth, true);
-        Height = 38;
+        Height = Short(t) != "" ? 54 : 38;
         hover = new AnimFloat(0, () => Invalidate(true));
         changed = new AnimFloat(0, () => Invalidate(false));
         flash = new AnimFloat(0, () => Invalidate(true));
@@ -1035,6 +1035,28 @@ class TweakRow : Control
     protected override void OnMouseEnter(EventArgs e) { hover.To(1, 150); base.OnMouseEnter(e); }
     protected override void OnMouseLeave(EventArgs e) { CheckHover(); base.OnMouseLeave(e); }
 
+    /// <summary>Коротко, что делает настройка: подпись (издатель) или первое предложение описания.</summary>
+    static string Short(Tweak t)
+    {
+        if (!string.IsNullOrEmpty(t.Subtitle)) return t.Subtitle;
+        var d = (t.Description ?? "").Split('\n')[0].Trim();
+        int dot = d.IndexOf(". ", StringComparison.Ordinal);
+        if (dot > 20) d = d[..(dot + 1)];
+        return d;
+    }
+
+    /// <summary>Метки: насколько безопасно и что потребуется.</summary>
+    static List<(string Text, Color Color)> Labels(Tweak t)
+    {
+        var list = new List<(string, Color)>();
+        if (t.Category is StartupManager.Cat || t.Category == Programs.Cat) return list;
+        if (t.Risky) list.Add(("для опытных", Theme.Warn));
+        else if (t.IsAction) list.Add(("разовое действие", Color.FromArgb(150, 160, 175)));
+        else if (t.Revert != null || t.IsValue) list.Add(("безопасно", Theme.Good));
+        if (t.NeedsRestart) list.Add(("нужна перезагрузка", Color.FromArgb(120, 170, 255)));
+        return list;
+    }
+
     int ButtonsWidth => Main.Width + 14 + InfoBtn.Width + 4 + (FolderBtn != null ? FolderBtn.Width + 4 : 0);
 
     protected override void OnLayout(LayoutEventArgs e)
@@ -1077,14 +1099,25 @@ class TweakRow : Control
             x += 28;
         }
 
-        var rect = new Rectangle(x, 0, Width - ButtonsWidth - x, Height);
-        TextRenderer.DrawText(g, T.Name, Theme.Body, rect, col, flags);
-        int nameW = Math.Min(TextRenderer.MeasureText(T.Name, Theme.Body).Width, rect.Width);
-        if (T.Risky)
-            TextRenderer.DrawText(g, "⚠", Theme.Body, new Rectangle(x + nameW + 2, 0, 24, Height), Theme.Fade(this, Theme.Warn), flags);
-        else if (T.Subtitle != null && nameW + 40 < rect.Width)
-            TextRenderer.DrawText(g, "· " + T.Subtitle, Theme.Tiny, new Rectangle(x + nameW + 2, 0, rect.Width - nameW - 2, Height),
-                Theme.Fade(this, Theme.Dim), flags);
+        string sub = Short(T);
+        bool two = sub != "" && Height >= 50;
+        var rect = new Rectangle(x, two ? 7 : 0, Width - ButtonsWidth - x, two ? 22 : Height);
+        TextRenderer.DrawText(g, T.Name, Theme.Semi, rect, col, flags);
+        int nameW = Math.Min(TextRenderer.MeasureText(T.Name, Theme.Semi).Width, rect.Width);
+        // метки после названия
+        int lx = x + nameW + 8;
+        foreach (var (text, color) in Labels(T))
+        {
+            int w = TextRenderer.MeasureText(text, Theme.Tiny).Width + 10;
+            if (lx + w > rect.Right) break;
+            var pill = new RectangleF(lx, rect.Y + (rect.Height - 17) / 2f, w, 17);
+            Theme.Fill(g, Color.FromArgb((int)(34 * Theme.AppearOf(this)), color), pill, 8.5f);
+            TextRenderer.DrawText(g, text, Theme.Tiny, Rectangle.Round(pill), Theme.Fade(this, color),
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            lx += w + 5;
+        }
+        if (two)
+            TextRenderer.DrawText(g, sub, Theme.Tiny, new Rectangle(x, 28, rect.Width, 18), Theme.Fade(this, Theme.Muted), flags);
     }
 }
 
