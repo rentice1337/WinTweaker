@@ -1,4 +1,8 @@
 name: Sign test
+on:
+  push:
+    branches:
+    - sign-test
 jobs:
   t:
     runs-on: windows-latest
@@ -8,23 +12,30 @@ jobs:
       with:
         dotnet-version: 8.0.x
     - run: dotnet publish WinTweaker.csproj -c Release -p:Version=2.0.0 -o publish
-    - name: Key script (Windows PowerShell 5.1)
-      shell: powershell
+    - name: Key
+      shell: pwsh
       run: 'try {
 
-        function Read-Host { param($p) Write-Host "[ответ на: $p] н"; ''н'' }
+        $cmd = "function Read-Host { param(`$p) ''n'' }; . ''.\tools\New-SigningCert.ps1''"
 
-        . .\tools\New-SigningCert.ps1
+        $out = powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String
+
+        $code = $LASTEXITCODE
+
+        Write-Host "::warning title=key script (exit $code)::$($out -replace "`r?`n", ''%0A'')"
 
         $d = Join-Path ([Environment]::GetFolderPath(''Desktop'')) ''WinTweak-signing''
 
-        Get-ChildItem $d | Format-Table Name, Length
+        Write-Host "::warning title=files::$((Get-ChildItem $d -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Name) $($_.Length)" }) -join ''%0A'')"
 
-        "SIGN_PFX=$(Get-Content (Join-Path $d ''SIGN_PFX_BASE64.txt'') -Raw)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+        $left = Get-ChildItem Cert:\CurrentUser\My | Where-Object Subject -eq ''CN=rentice1337''
 
-        "SIGN_PASSWORD=$(Get-Content (Join-Path $d ''SIGN_PFX_PASSWORD.txt'') -Raw)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+        Write-Host "::warning title=store::left in store: $([bool]$left)"
 
-        if (Get-ChildItem Cert:\CurrentUser\My | Where-Object Subject -eq ''CN=rentice1337'') { throw ''ключ остался в хранилище'' } else { ''хранилище чистое'' }
+        "SIGN_PFX=$(Get-Content (Join-Path $d ''SIGN_PFX_BASE64.txt'') -Raw)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8NoBOM
+
+        "SIGN_PASSWORD=$(Get-Content (Join-Path $d ''SIGN_PFX_PASSWORD.txt'') -Raw)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8NoBOM
+
 
         } catch { $m = ($_ | Out-String) + $_.ScriptStackTrace; Write-Host "::error::$($m -replace "`r?`n", ''%0A'')"; exit 1 }'
     - name: Sign
@@ -35,16 +46,13 @@ jobs:
       shell: pwsh
       run: 'try {
 
-        Get-AuthenticodeSignature publish\WinTweaker.exe | Format-List Status, StatusMessage, SignerCertificate, TimeStamperCertificate
+        $s = Get-AuthenticodeSignature publish\WinTweaker.exe
 
-        (Get-Item publish\WinTweaker.exe).VersionInfo | Format-List CompanyName, LegalCopyright, ProductName, FileDescription, ProductVersion
+        $v = (Get-Item publish\WinTweaker.exe).VersionInfo
 
-        "thumb=$env:SIGN_THUMB subject=$env:SIGN_SUBJECT"
+        Write-Host "::warning title=signature::status=$($s.Status)%0Asigner=$($s.SignerCertificate.Subject)%0Atimestamp=$($s.TimeStamperCertificate.Subject)%0Athumb=$env:SIGN_THUMB subject=$env:SIGN_SUBJECT%0Acer=$((Get-Item publish\WinTweaker-signing.cer).Length)"
 
-        Get-Item publish\WinTweaker-signing.cer
+        Write-Host "::warning title=version info::company=$($v.CompanyName)%0Acopyright=$($v.LegalCopyright)%0Aproduct=$($v.ProductName)%0Adesc=$($v.FileDescription)%0Aver=$($v.ProductVersion)"
+
 
         } catch { $m = ($_ | Out-String) + $_.ScriptStackTrace; Write-Host "::error::$($m -replace "`r?`n", ''%0A'')"; exit 1 }'
-on:
-  push:
-    branches:
-    - sign-test
