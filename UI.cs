@@ -318,7 +318,7 @@ abstract class Surface : FadeIn
         reach.Inflate(Spotlight.Reach, Spotlight.Reach);
         bool near = !Motion.Reduced && Spotlight.Enabled && reach.Contains(cur);
         if (near) EnsureRegions(path);
-        if (near && bodyRegion != null)
+        if (near && bodyRegion != null && LightsChildren)
         {
             // мягкий блик внутри карточки — готовая картинка, обрезанная по форме тела
             var st = g.Save();
@@ -342,6 +342,41 @@ abstract class Surface : FadeIn
 
     Region? bodyRegion, edgeRegion;
     Size regionsFor;
+
+    /// <summary>
+    /// Мягкий блик внутри карточки рисуется и под дочерними контролами (кнопки, переключатели, плитки) —
+    /// иначе вокруг них видны тёмные прямоугольники. Для карточек со множеством строк (списки настроек)
+    /// блика внутри нет, только подсветка рамки: перерисовывать десятки строк на каждое движение мыши дорого.
+    /// </summary>
+    public bool LightsChildren => this is not Card && Descendants(this) <= 40;
+
+    static int Descendants(Control c)
+    {
+        int n = 0;
+        foreach (Control x in c.Controls) n += 1 + Descendants(x);
+        return n;
+    }
+
+    /// <summary>Кусок блика под дочерним контролом (вызывается из Glass.Back).</summary>
+    public void PaintGlowUnder(Graphics g, Control child)
+    {
+        if (Motion.Reduced || !Spotlight.Enabled || !LightsChildren) return;
+        var cur = PointToClient(Spotlight.Cursor);
+        var reach = ClientRectangle;
+        reach.Inflate(Spotlight.Reach, Spotlight.Reach);
+        if (!reach.Contains(cur)) return;
+        using (var path = Theme.Round(BodyF, 12)) EnsureRegions(path);
+        if (bodyRegion == null) return;
+        int ox = 0, oy = 0;
+        for (var p = child; p != null && p != this; p = p.Parent) { ox += p.Left; oy += p.Top; }
+        using var reg = bodyRegion.Clone();
+        reg.Translate(-ox, -oy);
+        var st = g.Save();
+        g.CompositingMode = CompositingMode.SourceOver;
+        g.SetClip(reg, CombineMode.Intersect);
+        g.DrawImageUnscaled(Spotlight.Soft, cur.X - ox - Spotlight.R, cur.Y - oy - Spotlight.R);
+        g.Restore(st);
+    }
 
     void EnsureRegions(GraphicsPath path)
     {
@@ -716,7 +751,7 @@ static class Logo
 /// <summary>Холст меню: подписи разделов и общий скользящий индикатор выбранного пункта.</summary>
 class NavCanvas : Canvas
 {
-    public const int ItemH = 30, Step = 31;
+    public const int ItemH = 30, Step = 30;
     public readonly List<(string Text, int Y)> Labels = new();
     public readonly AnimFloat Ind;
     public double IndY => Ind.Value;
@@ -746,6 +781,23 @@ class NavHost : Viewport
 {
     public NavHost() : base(new NavCanvas()) { }
     public NavCanvas Nav => (NavCanvas)Canvas;
+
+    // пункты у краёв перерисовываются: на них «затухание», намекающее, что меню прокручивается
+    protected override void OnScrolled() => Canvas.Invalidate(true);
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        Canvas.Invalidate(true);
+    }
+
+    /// <summary>Прокрутить так, чтобы пункт был виден.</summary>
+    public void Reveal(Control item)
+    {
+        int y = item.Top + Canvas.Top;
+        if (y < 8) ScrollTo(item.Top - 40);
+        else if (y + item.Height > Height - 8) ScrollTo(item.Bottom - Height + 40);
+    }
 }
 
 /// <summary>Пункт меню. Подсветку выбранного рисует общий индикатор, который плавно переезжает между пунктами.</summary>
@@ -805,6 +857,25 @@ class NavItem : Control
         TextRenderer.DrawText(g, Text, s > 0.5 ? Theme.Semi : Theme.Body, new Rectangle(44 + nudge, 0, Width - 48, Height),
             Theme.Lerp(Color.FromArgb(170, 173, 188), Theme.Text, Math.Max(s, h)),
             TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+
+        // затухание у краёв прокручиваемого меню
+        if (Parent is NavCanvas canvas && canvas.Parent is NavHost host && host.CanScroll)
+        {
+            const int F = 34;
+            int y = Top + canvas.Top;
+            if (!host.AtEnd) Fade(g, host.Height - F - y, F, false);
+            if (!host.AtStart) Fade(g, -y, F, true);
+        }
+    }
+
+    void Fade(Graphics g, int zoneTop, int f, bool top)
+    {
+        var zone = new Rectangle(0, zoneTop, Width, f);
+        if (!zone.IntersectsWith(ClientRectangle)) return;
+        var c0 = Color.FromArgb(top ? 235 : 0, 12, 13, 18);
+        var c1 = Color.FromArgb(top ? 0 : 235, 12, 13, 18);
+        using var b = new LinearGradientBrush(new Rectangle(0, zoneTop - 1, Width, f + 2), c0, c1, 90f);
+        g.FillRectangle(b, Rectangle.Intersect(zone, ClientRectangle));
     }
 }
 

@@ -224,6 +224,8 @@ class BootWidget : Widget
     {
         boots = data;
         firstSession = first;
+        // без записей — компактная карточка с пояснением, без пустого места под график
+        Height = data.Count == 0 ? 28 + 92 : 28 + 70 + ChartH + 30;
         Invalidate(false);
     }
 
@@ -430,7 +432,10 @@ class DnsWidget : Widget
     public readonly FlatBtn UseBest;
     const int RowH = 30;
 
-    public DnsWidget() : base("Скорость DNS", 28 + 12 + (DnsBench.Servers.Length + 1) * RowH + 64)
+    const int Compact = 28 + 12 + 80 + 60;
+    static int Full => 28 + 12 + (DnsBench.Servers.Length + 1) * RowH + 64;
+
+    public DnsWidget() : base("Скорость DNS", Compact)
     {
         Run = new FlatBtn("", "Запустить тест") { Primary = true };
         UseBest = new FlatBtn("", "Включить лучший") { Visible = false };
@@ -461,6 +466,7 @@ class DnsWidget : Widget
         Running = false;
         results = data;
         currentIp = current;
+        Height = data.Count == 0 ? Compact : Full;
         var best = Best;
         UseBest.Visible = best != null;
         Invalidate(true);
@@ -470,7 +476,7 @@ class DnsWidget : Widget
     {
         base.OnLayout(e);
         if (Run is null || UseBest is null) return;
-        Run.Location = new Point(10 - 8 + 8, Height - Run.Height - 6);
+        Run.Location = new Point(10, Height - Run.Height - 6);
         UseBest.Location = new Point(Width - UseBest.Width - 14, Height - UseBest.Height - 14);
     }
 
