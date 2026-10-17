@@ -1036,13 +1036,15 @@ class ReportDialog : RoundForm
     bool closing;
     int baseTop;
 
+    bool HasFps => rep.Fps != null && rep.FpsSeries.Length > 1;
+
     public ReportDialog(MatchReport rep)
     {
         this.rep = rep;
         StartPosition = FormStartPosition.Manual;
         KeyPreview = true;
         Opacity = 0;
-        Size = new Size(720, 470);
+        Size = new Size(720, HasFps ? 640 : 470);
         var ok = new FlatBtn("", "Понятно") { Primary = true };
         ok.Location = new Point(Width - 24 - ok.Width + ok.Pad, Height - 22 - ok.Height + ok.Pad);
         ok.Click += (_, _) => Finish();
@@ -1129,5 +1131,26 @@ class ReportDialog : RoundForm
         GameUI.Dot(g, col, 26, 340, 10);
         TextRenderer.DrawText(g, text, Theme.Semi, new Rectangle(46, 332, Width - 70, 44), Theme.Text, TextFormatFlags.WordBreak);
         TextRenderer.DrawText(g, "Красные линии — потерянные пакеты. Пунктир — средний пинг.", Theme.Tiny, new Rectangle(24, Height - 50, 420, 20), Theme.Dim, flags);
+
+        if (!HasFps) return;
+        // FPS за игру
+        TextRenderer.DrawText(g, "FPS", Theme.Small, new Point(24, 392), Theme.Muted);
+        string fpsLine = $"средний {rep.Fps:0}" + (rep.Low1 is double lo ? $"  ·  1% low {lo:0}" : "");
+        TextRenderer.DrawText(g, fpsLine, Theme.F(11f, FontStyle.Bold), new Rectangle(60, 386, Width - 84, 24), Theme.Text, flags);
+        var fa = new RectangleF(24, 418, Width - 48, 140);
+        Theme.Fill(g, Color.FromArgb(14, 255, 255, 255), fa, 10);
+        var fs = rep.FpsSeries;
+        double fmax = Math.Max(30, fs.Max() * 1.1);
+        var fpts = fs.Select((v, i) => new PointF(fa.X + 10 + (fa.Width - 20) * i / Math.Max(1, fs.Length - 1), fa.Bottom - 8 - (float)(v / fmax * (fa.Height - 16)))).ToArray();
+        using (var fill = new GraphicsPath())
+        {
+            fill.AddLines(fpts);
+            fill.AddLine(fpts[^1], new PointF(fpts[^1].X, fa.Bottom - 8));
+            fill.AddLine(new PointF(fpts[^1].X, fa.Bottom - 8), new PointF(fpts[0].X, fa.Bottom - 8));
+            using var lg = new LinearGradientBrush(fa, Color.FromArgb(70, Theme.Good), Color.FromArgb(0, Theme.Good), 90f);
+            g.FillPath(lg, fill);
+        }
+        using (var pen = new Pen(Theme.Good, 1.5f) { LineJoin = LineJoin.Round }) g.DrawLines(pen, fpts);
+        TextRenderer.DrawText(g, $"{fmax:0}", Theme.Tiny, new Point((int)fa.X + 8, (int)fa.Y + 4), Theme.Dim);
     }
 }

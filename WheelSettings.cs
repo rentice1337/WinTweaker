@@ -46,7 +46,7 @@ static class WheelSettings
 
     /// <summary>0 — маленький, 1 — средний, 2 — большой.</summary>
     public static int Size { get => Int("wheel.size", 1, 0, 2); set => AppSettings.Set("wheel.size", value.ToString()); }
-    public static float Scale => Size switch { 0 => 0.8f, 2 => 1.2f, _ => 1f };
+    public static float Scale => 1f; // размер один — средний
 
     public static bool Centered { get => AppSettings.Get("wheel.center", "0") == "1"; set => AppSettings.Set("wheel.center", value ? "1" : "0"); }
     public static bool Hint { get => AppSettings.Get("wheel.hint", "1") == "1"; set => AppSettings.Set("wheel.hint", value ? "1" : "0"); }

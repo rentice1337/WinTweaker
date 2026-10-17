@@ -13,8 +13,6 @@ public partial class MainForm
     void BuildWheelCard(Control cv)
     {
         var card = new OptionsCard("Круговой пульт");
-        card.AddCustom("Размер", "Масштаб кольца",
-            Seg(new[] { "Малый", "Средний", "Большой" }, WheelSettings.Size, v => WheelSettings.Size = v));
         card.AddCustom("Где открывать", "У курсора или по центру экрана",
             Seg(new[] { "У курсора", "По центру" }, WheelSettings.Centered ? 1 : 0, v => WheelSettings.Centered = v == 1));
         card.AddCustom("Игр во втором кольце", "Сколько обложек показывать в «Играх»",
@@ -47,17 +45,28 @@ public partial class MainForm
         var card = new OptionsCard("Игровой оверлей");
         void Reload() => Overlay.Reload();
         card.Add("Показывать сам при игре", "Появляется при запуске игры и исчезает после неё", () => OverlaySettings.Auto, on => OverlaySettings.Auto = on);
-        card.AddCustom("Вид", "Строка в углу или панель с графиком времени кадра",
-            Seg(new[] { "Строка", "Панель" }, OverlaySettings.Style, v => { OverlaySettings.Style = v; Reload(); }));
-        card.AddCustom("Угол", "Где на экране игры",
-            Seg(new[] { "↖", "↗", "↙", "↘" }, OverlaySettings.Corner, v => { OverlaySettings.Corner = v; Reload(); }));
-        card.AddCustom("Размер", "Масштаб текста и графика",
-            Seg(new[] { "80%", "100%", "125%", "150%" }, OverlaySettings.Size, v => { OverlaySettings.Size = v; Reload(); }));
+        card.AddCustom("Вид", "Капсула — компактно, HUD — без фона, Панель — с графиками",
+            Seg(OverlaySettings.Styles, OverlaySettings.Style, v => { OverlaySettings.Style = v; Reload(); }));
+        var corner = Seg(new[] { "↖", "↗", "↙", "↘" }, Math.Min(3, OverlaySettings.Corner), v => { OverlaySettings.Corner = v; Reload(); });
+        card.AddCustom("Угол", "Или перетащите мышью — кнопка ниже", corner);
+        var move = new FlatBtn("\uE7C2", "Переместить");
+        move.Click += (_, _) =>
+        {
+            bool now = !Overlay.Editing;
+            Overlay.Edit(now);
+            move.Text = now ? "Готово" : "Переместить";
+            if (now) Toast.Pop(this, "Перетащите оверлей мышью, двойной клик по нему — готово", Tone.Info);
+        };
+        card.AddCustom("Своё место", "Оверлей можно поставить в любую точку экрана", move);
         var bg = new Slider(0, 100, 10, v => v == 0 ? "без фона" : $"фон {v}%") { Value = OverlaySettings.Background };
         bg.Changed += v => { OverlaySettings.Background = v; Reload(); };
         card.AddCustom("Прозрачность фона", "0% — только цифры", bg);
         card.Add("Предупреждения", "Цифры желтеют и краснеют: FPS просел, пинг скакнул, видеокарта перегрелась",
             () => OverlaySettings.Warnings, on => { OverlaySettings.Warnings = on; Reload(); });
+        card.Add("Тихий режим", "Еле виден, пока всё хорошо, и ярко появляется при просадке FPS или скачке пинга",
+            () => OverlaySettings.Quiet, on => { OverlaySettings.Quiet = on; Reload(); });
+        card.Add("Линия цели FPS", "На графике — частота монитора: видно, дотягивает ли игра до 144/165",
+            () => OverlaySettings.TargetLine, on => { OverlaySettings.TargetLine = on; Reload(); });
         var hk = new HotkeyBox(OverlaySettings.Hotkey);
         hk.Changed += k =>
         {

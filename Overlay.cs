@@ -13,20 +13,38 @@ static class OverlaySettings
         ("temp", "Температура GPU"), ("ping", "Пинг и потери"), ("ram", "ОЗУ"), ("clock", "Часы"), ("session", "Время в игре"),
     };
 
+    public static readonly string[] Styles = { "Капсула", "HUD", "Панель" };
+
     static int Int(string key, int def, int min, int max) =>
         int.TryParse(AppSettings.Get(key, def.ToString()), out int v) ? Math.Clamp(v, min, max) : def;
 
-    /// <summary>0 — строка, 1 — панель с графиком.</summary>
-    public static int Style { get => Int("ov.style", 1, 0, 1); set => AppSettings.Set("ov.style", value.ToString()); }
-    /// <summary>0 — слева сверху, 1 — справа сверху, 2 — слева снизу, 3 — справа снизу.</summary>
-    public static int Corner { get => Int("ov.corner", 0, 0, 3); set => AppSettings.Set("ov.corner", value.ToString()); }
-    /// <summary>Размер: 0 — 80%, 1 — 100%, 2 — 125%, 3 — 150%.</summary>
-    public static int Size { get => Int("ov.size", 1, 0, 3); set => AppSettings.Set("ov.size", value.ToString()); }
-    public static float Scale => Size switch { 0 => 0.8f, 2 => 1.25f, 3 => 1.5f, _ => 1f };
+    /// <summary>0 — неоновая капсула, 1 — тактический HUD, 2 — панель-дашборд.</summary>
+    public static int Style { get => Int("ov.style2", 0, 0, 2); set => AppSettings.Set("ov.style2", value.ToString()); }
+    /// <summary>0 — слева сверху, 1 — справа сверху, 2 — слева снизу, 3 — справа снизу, 4 — своё место (перетащено мышью).</summary>
+    public static int Corner { get => Int("ov.corner", 0, 0, 4); set => AppSettings.Set("ov.corner", value.ToString()); }
+    /// <summary>Своё место: доли свободного пространства экрана по X и Y (0…1).</summary>
+    public static (double X, double Y) Place
+    {
+        get
+        {
+            double.TryParse(AppSettings.Get("ov.x", "0"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double x);
+            double.TryParse(AppSettings.Get("ov.y", "0"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double y);
+            return (Math.Clamp(x, 0, 1), Math.Clamp(y, 0, 1));
+        }
+        set
+        {
+            AppSettings.Set("ov.x", value.X.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture));
+            AppSettings.Set("ov.y", value.Y.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
     /// <summary>Непрозрачность фона, %.</summary>
-    public static int Background { get => Int("ov.bg", 60, 0, 100); set => AppSettings.Set("ov.bg", value.ToString()); }
+    public static int Background { get => Int("ov.bg", 70, 0, 100); set => AppSettings.Set("ov.bg", value.ToString()); }
     public static bool Auto { get => AppSettings.Get("ov.auto", "1") == "1"; set => AppSettings.Set("ov.auto", value ? "1" : "0"); }
     public static bool Warnings { get => AppSettings.Get("ov.warn", "1") == "1"; set => AppSettings.Set("ov.warn", value ? "1" : "0"); }
+    /// <summary>Тихий режим: полупрозрачный, пока всё в порядке.</summary>
+    public static bool Quiet { get => AppSettings.Get("ov.quiet", "0") == "1"; set => AppSettings.Set("ov.quiet", value ? "1" : "0"); }
+    /// <summary>Линия цели FPS (частота монитора) на графике.</summary>
+    public static bool TargetLine { get => AppSettings.Get("ov.target", "1") == "1"; set => AppSettings.Set("ov.target", value ? "1" : "0"); }
     public static bool On(string metric) => AppSettings.Get("ov.m." + metric, metric is "clock" ? "0" : "1") == "1";
     public static void Set(string metric, bool on) => AppSettings.Set("ov.m." + metric, on ? "1" : "0");
 
@@ -138,267 +156,3 @@ static class GpuMeter
     }
 }
 
-/// <summary>Управление оверлеем: показ/скрытие, автопоказ в игре.</summary>
-static class Overlay
-{
-    static OverlayWindow? window;
-    static bool autoShown;
-    public static bool Visible => window is { IsDisposed: false };
-
-    public static void Toggle()
-    {
-        if (Visible) Hide(); else Show();
-    }
-
-    public static void Show()
-    {
-        if (Visible) return;
-        window = new OverlayWindow();
-        window.FormClosed += (_, _) => window = null;
-        window.Show();
-    }
-
-    public static void Hide()
-    {
-        autoShown = false;
-        window?.Close();
-        window = null;
-    }
-
-    /// <summary>Пересобрать после смены настроек.</summary>
-    public static void Reload()
-    {
-        if (!Visible) return;
-        Hide();
-        Show();
-    }
-
-    public static void GameStarted()
-    {
-        if (OverlaySettings.Auto && !Visible) { Show(); autoShown = true; }
-    }
-
-    public static void GameEnded()
-    {
-        if (autoShown) Hide();
-    }
-}
-
-/// <summary>
-/// Окно оверлея: поверх всех окон, прозрачное для мыши, без фокуса. Видно поверх игр в оконном и «полноэкранном
-/// оконном» режимах; в эксклюзивном полноэкранном режиме Windows не показывает поверх игры другие окна.
-/// </summary>
-sealed class OverlayWindow : LayeredForm
-{
-    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
-    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-
-    readonly System.Windows.Forms.Timer timer = new() { Interval = 250 };
-    readonly float k = OverlaySettings.Scale;
-    readonly int style = OverlaySettings.Style, corner = OverlaySettings.Corner, bgAlpha = (int)(OverlaySettings.Background * 2.4);
-    readonly bool warn = OverlaySettings.Warnings;
-    readonly Dictionary<string, bool> on = OverlaySettings.Metrics.ToDictionary(m => m.Key, m => OverlaySettings.On(m.Key));
-    readonly Font big, mid, small;
-    readonly Queue<double> fpsHist = new(), pingHist = new();
-    int tick;
-
-    public OverlayWindow()
-    {
-        big = new Font("Segoe UI Semibold", 20f * k, GraphicsUnit.Pixel);
-        mid = new Font("Segoe UI Semibold", 13f * k, GraphicsUnit.Pixel);
-        small = new Font("Segoe UI", 11.5f * k, GraphicsUnit.Pixel);
-        Size = style == 0 ? new Size((int)(420 * k), (int)(30 * k)) : new Size((int)(236 * k), (int)(150 * k));
-        timer.Tick += (_, _) => Frame();
-    }
-
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            var cp = base.CreateParams;
-            cp.ExStyle |= 0x00000020 /* TRANSPARENT */ | 0x08000000 /* NOACTIVATE */;
-            return cp;
-        }
-    }
-
-    protected override bool ShowWithoutActivation => true;
-
-    protected override void OnShown(EventArgs e)
-    {
-        base.OnShown(e);
-        if (on["fps"] || on["ft"] || on["low"]) FpsMeter.Acquire();
-        if (on["gpu"] || on["temp"]) GpuMeter.Acquire();
-        Frame();
-        timer.Start();
-    }
-
-    protected override void OnFormClosed(FormClosedEventArgs e)
-    {
-        timer.Dispose();
-        if (on["fps"] || on["ft"] || on["low"]) FpsMeter.Release();
-        if (on["gpu"] || on["temp"]) GpuMeter.Release();
-        big.Dispose(); mid.Dispose(); small.Dispose();
-        base.OnFormClosed(e);
-    }
-
-    /// <summary>Чья статистика: игра из слежения, иначе окно на переднем плане.</summary>
-    static int TargetPid()
-    {
-        if (GameWatcher.Current is { } run) return run.Pid;
-        var h = GetForegroundWindow();
-        GetWindowThreadProcessId(h, out uint pid);
-        return pid == Environment.ProcessId ? FpsMeter.Pid : (int)pid;
-    }
-
-    void Frame()
-    {
-        if (IsDisposed) return;
-        FpsMeter.Pid = TargetPid();
-        // место: угол экрана, на котором окно на переднем плане (игра)
-        var screen = Screen.FromHandle(GetForegroundWindow()).Bounds;
-        int m = (int)(14 * k);
-        int x = corner is 0 or 2 ? screen.Left + m : screen.Right - Width - m;
-        int y = corner is 0 or 1 ? screen.Top + m : screen.Bottom - Height - m;
-        if (Location != new Point(x, y) || tick++ % 8 == 0)
-            SetWindowPos(Handle, (IntPtr)(-1) /* TOPMOST */, x, y, 0, 0, 0x0001 /* NOSIZE */ | 0x0010 /* NOACTIVATE */);
-        Present();
-    }
-
-    // ───── значения и цвета предупреждений ─────
-
-    static void Push(Queue<double> q, double v, int max = 120)
-    {
-        q.Enqueue(v);
-        while (q.Count > max) q.Dequeue();
-    }
-
-    Color FpsColor(double fps)
-    {
-        if (!warn || fpsHist.Count < 20) return Theme.Text;
-        double avg = fpsHist.Average();
-        return fps < avg * 0.6 ? Theme.Bad : fps < avg * 0.8 ? Theme.Warn : Theme.Text;
-    }
-
-    Color PingColor(int? ping)
-    {
-        if (ping == null) return warn ? Theme.Bad : Theme.Text;
-        if (!warn) return Theme.Text;
-        double avg = pingHist.Count > 5 ? pingHist.Average() : ping.Value;
-        return ping > avg + 40 || ping > 150 ? Theme.Bad : ping > avg + 15 || ping > 90 ? Theme.Warn : Theme.Text;
-    }
-
-    Color Hot(int? v, int warnAt, int badAt) =>
-        !warn || v == null ? Theme.Text : v >= badAt ? Theme.Bad : v >= warnAt ? Theme.Warn : Theme.Text;
-
-    protected override void Draw(Graphics g)
-    {
-        var s = Sampler.Current;
-        var fps = FpsMeter.Read();
-        if (fps is { } f && tick % 4 == 0) Push(fpsHist, f.Fps);
-        int? ping = GameMode.Monitor is { } mon ? mon.Last : s.PingMs;
-        if (ping is int pp && tick % 4 == 0) Push(pingHist, pp, 60);
-        int? gpu = GpuMeter.Load, temp = GpuMeter.Temp;
-        var run = GameWatcher.Current;
-
-        var rect = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-        float rad = 10 * k;
-        if (bgAlpha > 0)
-        {
-            using var path = Theme.Round(rect, rad);
-            using var b = new SolidBrush(Color.FromArgb(bgAlpha, 10, 11, 16));
-            g.FillPath(b, path);
-            using var pen = new Pen(Color.FromArgb(Math.Min(255, bgAlpha / 3 + 20), 255, 255, 255));
-            g.DrawPath(pen, path);
-        }
-
-        if (style == 0) DrawLine(g, s, fps, ping, gpu, temp, run);
-        else DrawPanel(g, s, fps, ping, gpu, temp, run);
-    }
-
-    void DrawLine(Graphics g, Snap s, FpsMeter.Reading? fps, int? ping, int? gpu, int? temp, GameWatcher.Running? run)
-    {
-        var items = new List<(string Text, Color Color)>();
-        if (on["fps"]) items.Add((fps is { } f ? $"{f.Fps:0} FPS" : "— FPS", fps is { } f2 ? FpsColor(f2.Fps) : Theme.Muted));
-        if (on["ft"] && fps is { } a) items.Add(($"{a.FrameMs:0.0} мс", Theme.Text));
-        if (on["low"] && fps is { } b) items.Add(($"1% {b.Low1:0}", Theme.Muted));
-        if (on["cpu"]) items.Add(($"CPU {s.Cpu:0}%", Hot((int)s.Cpu, 90, 98)));
-        if (on["gpu"] && gpu is int gl) items.Add(($"GPU {gl}%", Theme.Text));
-        if (on["temp"] && temp is int t) items.Add(($"{t}°", Hot(t, 83, 90)));
-        if (on["ping"]) items.Add((ping is int p ? $"{p} мс" : "пинг —", PingColor(ping)));
-        if (on["ram"]) items.Add(($"ОЗУ {s.Ram:0}%", Hot((int)s.Ram, 85, 95)));
-        if (on["clock"]) items.Add((DateTime.Now.ToString("HH:mm"), Theme.Muted));
-        if (on["session"] && run != null) items.Add((Clock(DateTime.Now - run.Since), Theme.Muted));
-
-        float x = 10 * k;
-        foreach (var (text, color) in items)
-        {
-            Txt(g, text, mid, color, new RectangleF(x, 0, Width, Height), StringAlignment.Near);
-            x += g.MeasureString(text, mid).Width + 2 * k;
-            Txt(g, "·", mid, Theme.Dim, new RectangleF(x, 0, 12 * k, Height), StringAlignment.Near);
-            x += 10 * k;
-        }
-        int want = (int)(x + 4 * k);
-        if (Math.Abs(want - Width) > 6) BeginInvoke(() => { if (!IsDisposed) Width = want; });
-    }
-
-    void DrawPanel(Graphics g, Snap s, FpsMeter.Reading? fps, int? ping, int? gpu, int? temp, GameWatcher.Running? run)
-    {
-        float pad = 12 * k, y = 8 * k, w = Width - pad * 2;
-        if (on["fps"])
-        {
-            Txt(g, fps is { } f ? $"{f.Fps:0}" : "—", big, fps is { } f2 ? FpsColor(f2.Fps) : Theme.Muted, new RectangleF(pad, y, w / 2, 28 * k), StringAlignment.Near);
-            Txt(g, "FPS", small, Theme.Muted, new RectangleF(pad + g.MeasureString(fps is { } f3 ? $"{f3.Fps:0}" : "—", big).Width, y + 9 * k, 40 * k, 16 * k), StringAlignment.Near);
-        }
-        if (on["low"] && fps is { } lo)
-            Txt(g, $"1% low {lo.Low1:0}", small, Theme.Muted, new RectangleF(pad, y + 6 * k, w, 18 * k), StringAlignment.Far);
-        y += 32 * k;
-        if (on["ft"])
-        {
-            var area = new RectangleF(pad, y, w - 54 * k, 30 * k);
-            using (var track = new SolidBrush(Color.FromArgb(28, 255, 255, 255))) g.FillRectangle(track, area.X, area.Bottom, area.Width, 1);
-            if (fps is { Recent.Length: > 2 } fr)
-            {
-                var v = fr.Recent;
-                double max = Math.Max(20, v.Max() * 1.1);
-                var pts = new PointF[v.Length];
-                for (int i = 0; i < v.Length; i++)
-                    pts[i] = new PointF(area.X + area.Width * i / (v.Length - 1), area.Bottom - (float)(v[i] / max * area.Height));
-                using var pen = new Pen(Theme.Accent, 1.3f * k) { LineJoin = LineJoin.Round };
-                g.DrawLines(pen, pts);
-                Txt(g, $"{fr.FrameMs:0.0} мс", small, Theme.Text, new RectangleF(area.Right + 4 * k, y + 6 * k, 52 * k, 18 * k), StringAlignment.Near);
-            }
-            else Txt(g, FpsMeter.Failed ? "FPS: " + FpsMeter.Error : "нет кадров DirectX 9–12", small, Theme.Dim, area, StringAlignment.Near);
-            y += 38 * k;
-        }
-        var line1 = new List<(string, Color)>();
-        if (on["cpu"]) line1.Add(($"CPU {s.Cpu:0}%", Hot((int)s.Cpu, 90, 98)));
-        if (on["gpu"]) line1.Add((gpu is int gl ? $"GPU {gl}%" : "GPU —", Theme.Text));
-        if (on["temp"] && temp is int t) line1.Add(($"{t}°", Hot(t, 83, 90)));
-        var line2 = new List<(string, Color)>();
-        if (on["ping"])
-        {
-            string loss = GameMode.Monitor != null && ping == null ? " · потеря" : "";
-            line2.Add((ping is int p ? $"пинг {p} мс{loss}" : "пинг —", PingColor(ping)));
-        }
-        if (on["ram"]) line2.Add(($"ОЗУ {s.Ram:0}%", Hot((int)s.Ram, 85, 95)));
-        var line3 = new List<(string, Color)>();
-        if (on["clock"]) line3.Add((DateTime.Now.ToString("HH:mm"), Theme.Muted));
-        if (on["session"] && run != null) line3.Add(("в игре " + Clock(DateTime.Now - run.Since), Theme.Muted));
-        foreach (var line in new[] { line1, line2, line3 })
-        {
-            if (line.Count == 0) continue;
-            float x = pad;
-            foreach (var (text, color) in line)
-            {
-                Txt(g, text, small, color, new RectangleF(x, y, Width, 18 * k), StringAlignment.Near);
-                x += g.MeasureString(text, small).Width + 6 * k;
-            }
-            y += 19 * k;
-        }
-        int want = (int)(y + 8 * k);
-        if (Math.Abs(want - Height) > 2) BeginInvoke(() => { if (!IsDisposed) Height = want; });
-    }
-
-    static string Clock(TimeSpan t) => t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes}:{t.Seconds:00}";
-}

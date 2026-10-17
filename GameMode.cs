@@ -19,6 +19,8 @@ static class GameMode
     public static DateTime Since { get; private set; }
     public static ConnMonitor? Monitor { get; private set; }
     public static event Action? Changed;
+    /// <summary>Дополнить отчёт перед сохранением (FPS за игру).</summary>
+    public static Action<MatchReport>? Enrich;
     static SynchronizationContext? ui;
 
     /// <summary>Из потока интерфейса при запуске: запомнить поток для событий и вернуть «хвосты» прошлого сеанса.</summary>
@@ -129,7 +131,11 @@ static class GameMode
         state = null;
         Reason = null;
         try { File.Delete(StateFile); } catch { }
-        if (report != null && report.Duration.TotalSeconds >= 60) Matches.Add(report);
+        if (report != null)
+        {
+            try { Enrich?.Invoke(report); } catch { }
+            if (report.Duration.TotalSeconds >= 60) Matches.Add(report);
+        }
         Notify();
         return report;
     }

@@ -7,6 +7,15 @@ internal static class Program
     {
         ApplicationConfiguration.Initialize();
 
+        // программа работает только с правами администратора (реестр HKLM, службы, трассировка кадров для FPS)
+        if (!Elevation.IsAdmin)
+        {
+            if (Elevation.Relaunch(args)) return;
+            MessageBox.Show("WinTweak нужны права администратора: без них нельзя менять системные настройки, службы и считать FPS.\n\n" +
+                            "Запустите программу снова и подтвердите запрос Windows.", "WinTweak", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
         // Задание «Сторожа» при входе в Windows: проверить откаты и показать уведомление, без окна
         if (args.Any(a => a.Equals("--watch", StringComparison.OrdinalIgnoreCase)))
         {
@@ -37,5 +46,39 @@ internal static class Program
         // колесо мыши — тому, кто под курсором (своя прокрутка без полос)
         Application.AddMessageFilter(new WheelFilter());
         Application.Run(form);
+    }
+}
+
+/// <summary>Права администратора: проверка и перезапуск с запросом UAC.</summary>
+static class Elevation
+{
+    public static bool IsAdmin
+    {
+        get
+        {
+            try
+            {
+                using var id = System.Security.Principal.WindowsIdentity.GetCurrent();
+                return new System.Security.Principal.WindowsPrincipal(id).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+            catch { return false; }
+        }
+    }
+
+    /// <summary>Перезапустить себя от администратора. false — пользователь отказался.</summary>
+    public static bool Relaunch(string[] args)
+    {
+        try
+        {
+            var exe = Environment.ProcessPath ?? Application.ExecutablePath;
+            var psi = new System.Diagnostics.ProcessStartInfo(exe, string.Join(" ", args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a)))
+            {
+                UseShellExecute = true,
+                Verb = "runas"
+            };
+            System.Diagnostics.Process.Start(psi);
+            return true;
+        }
+        catch { return false; }
     }
 }

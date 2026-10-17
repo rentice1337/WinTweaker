@@ -37,6 +37,7 @@ static class FpsMeter
     static volatile int pid;
     static int users;
     static double sumFt, sumCount;
+    static readonly int[] hist = new int[2001];      // время кадра за сессию, корзины по 0,1 мс (до 200 мс)
 
     public static bool Failed { get; private set; }
     public static string Error { get; private set; } = "";
@@ -100,7 +101,7 @@ static class FpsMeter
     static void Fail(string what, uint code)
     {
         Failed = true;
-        Error = code == 5 ? "нет прав администратора" : $"{what} (код {code})";
+        Error = code == 5 ? (Elevation.IsAdmin ? "Windows запретила трассировку (код 5)" : "нет прав администратора") : $"{what} (код {code})";
         try
         {
             var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WinTweaker");
@@ -169,7 +170,11 @@ static class FpsMeter
                 if (times.Count > 0)
                 {
                     double ft = t - times[^1];
-                    if (ft > 0 && ft < 1000) { sumFt += ft; sumCount++; }
+                    if (ft > 0 && ft < 1000)
+                    {
+                        sumFt += ft; sumCount++;
+                        hist[Math.Min(2000, (int)(ft * 10))]++;
+                    }
                 }
                 times.Add(t);
                 int cut = 0;
@@ -205,10 +210,29 @@ static class FpsMeter
     }
 
     /// <summary>Средний FPS с момента последнего сброса (для игровой статистики).</summary>
-    public static double? SessionAverage(bool reset)
+    public static double? SessionAverage(bool reset) => SessionStats(reset).Avg;
+
+    /// <summary>Средний FPS и 1% low за сессию (с момента сброса).</summary>
+    public static (double? Avg, double? Low1) SessionStats(bool reset)
     {
-        double? r = sumCount > 30 ? 1000 / (sumFt / sumCount) : null;
-        if (reset) { sumFt = 0; sumCount = 0; }
-        return r;
+        lock (gate)
+        {
+            (double?, double?) r = (null, null);
+            if (sumCount > 30)
+            {
+                // 1% худших кадров: идём по гистограмме с самых долгих
+                long need = Math.Max(1, (long)(sumCount / 100)), got = 0;
+                double sum = 0;
+                for (int i = hist.Length - 1; i >= 0 && got < need; i--)
+                {
+                    long take = Math.Min(hist[i], need - got);
+                    sum += take * (i + 0.5) / 10.0;
+                    got += take;
+                }
+                r = (1000 / (sumFt / sumCount), got > 0 ? 1000 / (sum / got) : null);
+            }
+            if (reset) { sumFt = 0; sumCount = 0; Array.Clear(hist); }
+            return r;
+        }
     }
 }

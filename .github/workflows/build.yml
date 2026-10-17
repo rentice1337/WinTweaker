@@ -32,6 +32,15 @@ jobs:
       - name: Publish
         run: dotnet publish WinTweaker.csproj -c Release -p:Version=${{ env.VERSION }} -o publish
 
+      - name: Verify admin manifest
+        shell: pwsh
+        run: |
+          # в exe должен быть манифест requireAdministrator — иначе программа запустится без прав
+          $bytes = [IO.File]::ReadAllBytes("publish/WinTweaker.exe")
+          $text = [Text.Encoding]::ASCII.GetString($bytes) + [Text.Encoding]::Unicode.GetString($bytes)
+          if ($text -notmatch 'requireAdministrator') { throw 'В WinTweaker.exe нет манифеста requireAdministrator' }
+          'Манифест requireAdministrator на месте'
+
       - name: Checksum
         shell: pwsh
         run: (Get-FileHash publish/WinTweaker.exe -Algorithm SHA256).Hash + '  WinTweaker.exe' | Out-File publish/WinTweaker.exe.sha256 -Encoding ascii

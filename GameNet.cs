@@ -290,6 +290,10 @@ sealed class MatchReport
     public bool Wifi { get; set; }
     /// <summary>Пинг по секундам (-1 — потеря), прорежено до 600 точек.</summary>
     public int[] Series { get; set; } = Array.Empty<int>();
+    /// <summary>FPS за игру (если считался): средний, 1% low и по секундам (прорежено до 600 точек).</summary>
+    public double? Fps { get; set; }
+    public double? Low1 { get; set; }
+    public int[] FpsSeries { get; set; } = Array.Empty<int>();
 
     public TimeSpan Duration => End - Start;
 

@@ -12,9 +12,27 @@ public partial class MainForm
     readonly Dictionary<int, List<GameNet.Result>> pingCache = new();
     int pingMode;
 
+    readonly List<int> fpsSeries = new();
+
     /// <summary>Подписки игрового центра (один раз из конструктора).</summary>
     void InitGames()
     {
+        // FPS по секундам во время игры — для отчёта после матча
+        Sampler.Updated += () =>
+        {
+            if (GameWatcher.Current == null) return;
+            lock (fpsSeries) fpsSeries.Add(FpsMeter.Read() is { } f ? (int)Math.Round(f.Fps) : 0);
+        };
+        GameMode.Enrich = r =>
+        {
+            var (avg, low) = FpsMeter.SessionStats(reset: false);
+            r.Fps = avg;
+            r.Low1 = low;
+            int[] s;
+            lock (fpsSeries) s = fpsSeries.ToArray();
+            int step = Math.Max(1, (int)Math.Ceiling(s.Length / 600.0));
+            r.FpsSeries = Enumerable.Range(0, (s.Length + step - 1) / step).Select(i => (int)s.Skip(i * step).Take(step).Average()).ToArray();
+        };
         GameMode.Init();
         GameWatcher.Start();
         GameMode.Changed += () => { if (gameBanner is { IsDisposed: false }) gameBanner.Sync(); };
@@ -30,6 +48,7 @@ public partial class MainForm
             FpsMeter.Acquire();
             FpsMeter.Pid = run.Pid;
             FpsMeter.SessionAverage(reset: true);
+            lock (fpsSeries) fpsSeries.Clear();
             Overlay.GameStarted();
             gameBanner?.Sync();
             libWidget?.Invalidate(false);
