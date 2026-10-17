@@ -114,7 +114,6 @@ public partial class MainForm : Form
         pendingBar.BringToFront();
         main.Resize += (_, _) => pendingBar.Reposition();
         pendingBar.Apply.Click += async (_, _) => await ApplyAsync();
-        pendingBar.Review.Click += async (_, _) => await ApplyAsync();
         pendingBar.Reset.Click += (_, _) => ResetPending();
         Controls.Add(main);
         Controls.Add(BuildSidebar());
@@ -495,7 +494,7 @@ public partial class MainForm : Form
             }
             if (c is FadeIn f) f.Place(p); else c.Location = p;
         }
-        view.SetContentHeight(Math.Max(y[0], y[1]) + pad);
+        view.SetContentHeight(Math.Max(y[0], y[1]) + pad + 72); // место под панель «Отмечено N изменений»
     }
 
     IEnumerable<TweakRow> Rows() =>

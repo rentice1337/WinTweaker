@@ -10,7 +10,6 @@ class PendingBar : Control
 {
     public readonly FlatBtn Apply = new("", "Применить") { Primary = true };
     public readonly FlatBtn Reset = new("", "Сбросить");
-    public readonly FlatBtn Review = new("", "Посмотреть");
     readonly AnimFloat show;
     int count;
     const int H = 60, W = 560;
@@ -21,7 +20,6 @@ class PendingBar : Control
         Size = new Size(W, H + 16);
         Visible = false;
         Controls.Add(Apply);
-        Controls.Add(Review);
         Controls.Add(Reset);
         show = new AnimFloat(0, () => { Reposition(); Invalidate(true); });
     }
@@ -52,10 +50,9 @@ class PendingBar : Control
     protected override void OnLayout(LayoutEventArgs e)
     {
         base.OnLayout(e);
-        if (Apply is null || Reset is null || Review is null) return;
+        if (Apply is null || Reset is null) return;
         Apply.Location = new Point(Width - Apply.Width - 8, (H - Apply.Height) / 2);
-        Review.Location = new Point(Apply.Left + Apply.Pad - Review.Width - 8, (H - Review.Height) / 2);
-        Reset.Location = new Point(Review.Left - Reset.Width - 6, (H - Reset.Height) / 2);
+        Reset.Location = new Point(Apply.Left + Apply.Pad - Reset.Width - 8, (H - Reset.Height) / 2);
     }
 
     protected override void OnPaint(PaintEventArgs e)
