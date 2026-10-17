@@ -182,7 +182,7 @@ sealed class TrayPanel : RoundForm
         using (var pen = new Pen(Theme.Line)) g.DrawLine(pen, 16, H - 62, W - 16, H - 62);
     }
 
-    void Meter(Graphics g, int x, int y, string label, double v, string text, Queue<double> hist, Color c)
+    void Meter(Graphics g, int x, int y, string label, double v, string text, double[] hist, Color c)
     {
         TextRenderer.DrawText(g, label, Theme.Tiny, new Point(x, y), Theme.Muted);
         var tw = TextRenderer.MeasureText(text, Theme.Semi).Width;

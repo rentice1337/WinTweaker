@@ -8,30 +8,43 @@ static class AppSettings
     static readonly string File_ = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WinTweaker", "settings.ini");
 
+    // Читается с диска один раз и живёт в памяти: Get вызывается и из потока виджетов, и часто
+    static Dictionary<string, string>? cache;
+    static readonly object gate = new();
+
     static Dictionary<string, string> Load()
     {
+        if (cache != null) return cache;
         try
         {
-            return File.Exists(File_)
+            cache = File.Exists(File_)
                 ? File.ReadAllLines(File_).Select(l => l.Split('=', 2)).Where(p => p.Length == 2)
-                    .ToDictionary(p => p[0].Trim(), p => p[1].Trim())
+                    .GroupBy(p => p[0].Trim()).ToDictionary(g => g.Key, g => g.Last()[1].Trim())
                 : new();
         }
-        catch { return new(); }
+        catch { cache = new(); }
+        return cache;
     }
 
-    public static string Get(string key, string def) => Load().GetValueOrDefault(key, def);
+    public static string Get(string key, string def)
+    {
+        lock (gate) return Load().GetValueOrDefault(key, def);
+    }
 
     public static void Set(string key, string value)
     {
-        try
+        lock (gate)
         {
             var s = Load();
+            if (s.TryGetValue(key, out var old) && old == value) return;
             s[key] = value;
-            Directory.CreateDirectory(Path.GetDirectoryName(File_)!);
-            File.WriteAllLines(File_, s.Select(kv => kv.Key + "=" + kv.Value));
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(File_)!);
+                File.WriteAllLines(File_, s.Select(kv => kv.Key + "=" + kv.Value));
+            }
+            catch { /* настройки не критичны */ }
         }
-        catch { /* настройки не критичны */ }
     }
 }
 
