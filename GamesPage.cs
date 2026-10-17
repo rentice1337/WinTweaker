@@ -44,12 +44,11 @@ public partial class MainForm
         };
         GameWatcher.Started += run =>
         {
-            // статистика: средний FPS за сессию; оверлей — если включён автопоказ
+            // статистика: средний FPS за сессию и график для отчёта после игры
             FpsMeter.Acquire();
             FpsMeter.Pid = run.Pid;
             FpsMeter.SessionAverage(reset: true);
             lock (fpsSeries) fpsSeries.Clear();
-            Overlay.GameStarted();
             gameBanner?.Sync();
             libWidget?.Invalidate(false);
         };
@@ -57,7 +56,6 @@ public partial class MainForm
         {
             var fps = FpsMeter.SessionAverage(reset: true);
             FpsMeter.Release();
-            Overlay.GameEnded();
             GameStats.Add(new PlaySession { Game = run.Name, Start = run.Since, End = DateTime.Now, Fps = fps, Ping = rep?.Avg });
             if (rep != null)
                 tray?.Balloon($"{run.Name} · {GameUI.Duration(rep.Duration)}",
@@ -168,9 +166,7 @@ public partial class MainForm
         full.Click += async (_, _) => await FullGpuReset();
         var mouseTest = new ActionTile("\uE962", "Тест мыши", "Реальная частота опроса");
         mouseTest.Click += (_, _) => { using var d = new MouseTestDialog(); d.ShowDialog(this); };
-        var overlay = new ActionTile("\uE7B3", "Оверлей", "Показать / скрыть · " + WheelSettings.Format(OverlaySettings.Hotkey));
-        overlay.Click += (_, _) => Overlay.Toggle();
-        cv.Controls.Add(new ActionsWidget("Инструменты", quick, full, mouseTest, overlay));
+        cv.Controls.Add(new ActionsWidget("Инструменты", quick, full, mouseTest));
 
         // ── частота мониторов ──
         var disp = new DisplayWidget();

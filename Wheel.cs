@@ -275,9 +275,6 @@ sealed class TrayWheel : LayeredForm
                     () => { var t = new System.Windows.Forms.Timer { Interval = 180 }; t.Tick += (_, _) => { t.Dispose(); GpuReset.Quick(); }; t.Start(); });
             case "dns": return new WheelCmd("Очистить кэш DNS", "DNS", "\uE774", "если сайт «переехал» или не открывается", FlushDns, true);
             case "ping": return new WheelCmd("Пинг", "Пинг", "\uE701", $"до {GameMode.Target}", RunPing, true);
-            case "overlay":
-                return new WheelCmd("Оверлей", Overlay.Visible ? "Оверлей: вкл" : "Оверлей", "\uE7F4", Overlay.Visible ? "скрыть игровой оверлей" : "показать игровой оверлей",
-                    () => { Overlay.Toggle(); Refresh("overlay"); }, true);
             case "apply":
                 return new WheelCmd("Применить изменения", "Применить", "\uE74E", main.PendingCount > 0 ? $"ждут: {main.PendingCount}" : "нет изменений", main.ReviewPending);
             case "hub": return new WheelCmd("Игровой центр", "Игр. центр", "\uE7FC", "игры, пинг, готовность", () => main.OpenPage(hub));

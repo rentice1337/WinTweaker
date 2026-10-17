@@ -15,7 +15,6 @@ static class WheelSettings
         ("gpu", "Сброс видеодрайвера"),
         ("dns", "Очистить кэш DNS"),
         ("ping", "Пинг"),
-        ("overlay", "Оверлей: показать / скрыть"),
         ("apply", "Применить изменения"),
         ("hub", "Игровой центр"),
         ("diag", "Диагностика"),
@@ -35,7 +34,8 @@ static class WheelSettings
     {
         get
         {
-            var a = AppSettings.Get("wheel.sectors", "").Split(',');
+            // сектор «Оверлей» убран вместе с оверлеем — на его месте пусто, остальной порядок сохраняется
+            var a = AppSettings.Get("wheel.sectors", "").Split(',').Select(x => x == "overlay" ? "none" : x).ToArray();
             return a.Length == 8 && a.All(x => Actions.Any(y => y.Id == x)) ? a : Default.ToArray();
         }
         set => AppSettings.Set("wheel.sectors", string.Join(",", value));

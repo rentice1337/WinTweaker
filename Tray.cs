@@ -31,7 +31,6 @@ sealed class Tray : IDisposable
         var menu = new ContextMenuStrip { Renderer = new DarkRenderer(), Font = Theme.Body };
         menu.Items.Add("Открыть WinTweak", null, (_, _) => main.ShowFromTray());
         menu.Items.Add("Пульт", null, (_, _) => ToggleWheel(Cursor.Position));
-        menu.Items.Add("Оверлей: показать / скрыть", null, (_, _) => Overlay.Toggle());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Выход", null, (_, _) => main.ExitApp());
         icon.ContextMenuStrip = menu;
@@ -44,10 +43,8 @@ sealed class Tray : IDisposable
         Update();
     }
 
-    /// <summary>Занять глобальные сочетания пульта и оверлея из настроек. Возвращает, что удалось занять.</summary>
-    public (bool Wheel, bool Overlay) ApplyHotkeys() =>
-        (hotkey.Set(1, WheelSettings.Hotkey, () => ToggleWheel(Cursor.Position)),
-         hotkey.Set(2, OverlaySettings.Hotkey, Overlay.Toggle));
+    /// <summary>Занять глобальное сочетание пульта из настроек. Возвращает, удалось ли.</summary>
+    public bool ApplyHotkeys() => hotkey.Set(1, WheelSettings.Hotkey, () => ToggleWheel(Cursor.Position));
 
     public void Balloon(string title, string text) => icon.ShowBalloonTip(4000, title, text, ToolTipIcon.Info);
 
@@ -123,7 +120,7 @@ sealed class Tray : IDisposable
     }
 }
 
-/// <summary>Невидимое окно для глобальных горячих клавиш (пульт, оверлей).</summary>
+/// <summary>Невидимое окно для глобальных горячих клавиш (пульт).</summary>
 sealed class HotkeyWindow : NativeWindow
 {
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);

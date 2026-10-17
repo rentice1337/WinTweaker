@@ -54,7 +54,7 @@ static class FpsMeter
         }
     }
 
-    /// <summary>Начать (счётчик ссылок: оверлей и статистика могут работать одновременно).</summary>
+    /// <summary>Начать (со счётчиком ссылок — можно вызывать из нескольких мест).</summary>
     public static void Acquire()
     {
         if (Interlocked.Increment(ref users) > 1 && thread != null) return;

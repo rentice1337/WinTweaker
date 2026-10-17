@@ -76,7 +76,7 @@ class PendingBar : Control
     }
 }
 
-/// <summary>Первый запуск: работа в трее и автозапуск — то, без чего не работают игровой режим и оверлей.</summary>
+/// <summary>Первый запуск: работа в трее и автозапуск — то, без чего не работают игровой режим и статистика игр.</summary>
 class WelcomeDialog : RoundForm
 {
     public readonly Toggle Tray = new() { Checked = true };
@@ -128,7 +128,7 @@ class WelcomeDialog : RoundForm
         TextRenderer.DrawText(g, "Работать в трее", Theme.Semi, new Point(24, 170), Theme.Text);
         TextRenderer.DrawText(g, "Крестик прячет окно; в трее — значок и круговой пульт (Ctrl+Alt+W)", Theme.Tiny, new Rectangle(24, 192, Width - 110, 18), Theme.Muted, TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, "Запускать вместе с Windows", Theme.Semi, new Point(24, 230), Theme.Text);
-        TextRenderer.DrawText(g, "Нужно, чтобы игровой режим и оверлей включались сами при запуске игр", Theme.Tiny, new Rectangle(24, 252, Width - 110, 18), Theme.Muted, TextFormatFlags.EndEllipsis);
+        TextRenderer.DrawText(g, "Нужно, чтобы игровой режим включался сам при запуске игр", Theme.Tiny, new Rectangle(24, 252, Width - 110, 18), Theme.Muted, TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, "Это можно поменять в любой момент в «Настройках».", Theme.Tiny, new Rectangle(24, Height - 54, 320, 20), Theme.Dim, TextFormatFlags.Left);
     }
 }

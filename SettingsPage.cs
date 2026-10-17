@@ -62,7 +62,6 @@ public partial class MainForm
             });
         cv.Controls.Add(tray);
         BuildWheelCard(cv);
-        BuildOverlayCards(cv);
 
         // ── Свои наборы ──
         var sets = new SetsWidget(Sets.Load(), s => Shareable.Count(t => s.Tweaks.Contains(t.Name)));
