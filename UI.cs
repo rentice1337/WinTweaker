@@ -525,6 +525,14 @@ class FlatBtn : Control
     /// <summary>Отступ под свечение у основной кнопки (контрол больше видимой кнопки).</summary>
     public int Pad => primary ? 8 : 0;
 
+    int count;
+    /// <summary>Число на кнопке (сколько изменений ждёт применения).</summary>
+    public int Count
+    {
+        get => count;
+        set { if (count != value) { count = value; Invalidate(); } }
+    }
+
     public bool Primary
     {
         get => primary;
@@ -583,6 +591,15 @@ class FlatBtn : Control
         TextRenderer.DrawText(g, glyph, Theme.Icon, new Rectangle(r.X + 9, r.Y, 22, r.Height), fg, center);
         TextRenderer.DrawText(g, Text, Theme.Semi, new Rectangle(r.X + 34, r.Y, r.Width - 38, r.Height), fg,
             TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+        if (count > 0)
+        {
+            // счётчик — белая «таблетка» в правом верхнем углу кнопки
+            string c = count > 99 ? "99+" : count.ToString();
+            int cw = Math.Max(18, TextRenderer.MeasureText(c, Theme.Small).Width + 8);
+            var pill = new RectangleF(r.Right - cw + 6, r.Y - 7, cw, 18);
+            Theme.Fill(g, Color.White, pill, 9);
+            TextRenderer.DrawText(g, c, Theme.Small, Rectangle.Round(pill), Theme.Accent, center);
+        }
     }
 }
 
@@ -798,7 +815,7 @@ class UserBadge : Control
     Color statusColor = Theme.Muted;
     public string User { get; set; } = "";
 
-    public UserBadge() { SetStyle(Theme.Smooth, true); }
+    public UserBadge() { SetStyle(Theme.Smooth, true); Cursor = Cursors.Hand; }
 
     public void SetStatus(string text, Color color)
     {

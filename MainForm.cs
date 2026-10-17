@@ -64,6 +64,7 @@ public partial class MainForm : Form
     readonly Toggle restoreToggle = new() { Checked = true };
     readonly ProgressLine progress = new() { Dock = DockStyle.Bottom };
     readonly PaletteTrigger trigger = new();
+    readonly FlatBtn applyBtn = new("\uE74E", "Применить") { Primary = true };
     readonly ToolTip tip = UI.MakeTip();
     readonly System.Windows.Forms.Timer liveTimer = new() { Interval = 1000 };
     readonly System.Windows.Forms.Timer cursorTimer = new() { Interval = 33 };
@@ -184,6 +185,8 @@ public partial class MainForm : Form
         int navHeight = y + 6;
 
         badge.Dock = DockStyle.Bottom;
+        badge.Click += async (_, _) => { if (Pending() > 0) await ApplyAsync(); };
+        tip.SetToolTip(badge, "Показать изменения, отмеченные к применению");
         badge.Height = 62;
         side.Controls.Add(nav);
         side.Controls.Add(badge);
@@ -201,7 +204,7 @@ public partial class MainForm : Form
         Drag(top);
         top.Controls.Add(progress);
 
-        var apply = new FlatBtn("", "Применить") { Primary = true };
+        var apply = applyBtn;
         apply.Click += async (_, _) => await ApplyAsync();
         var refresh = new FlatBtn("", "");
         refresh.Click += async (_, _) => { if (!busy) await LoadStateAsync(); };
@@ -747,7 +750,7 @@ public partial class MainForm : Form
     {
         string text = t.Details ?? "Подробностей нет.\n\n" + t.Description;
         string sub = t.Category + (t.Group != null ? " · " + t.Group : "") + (t.Risky ? " · ⚠ рискованная" : "") + (t.NeedsRestart ? " · нужна перезагрузка" : "");
-        DetailsDialog.Show(this, t.Name, sub, text);
+        DetailsDialog.Show(Form.ActiveForm ?? this, t.Name, sub, text);
     }
 
     static string Describe(Tweak t)
@@ -901,6 +904,56 @@ public partial class MainForm : Form
 
     // ───────── Состояние и применение ─────────
 
+    List<ChangeItem> PendingItems()
+    {
+        var list = new List<ChangeItem>();
+        foreach (var t in tweaks.Where(t => t.IsValue && desVal.GetValueOrDefault(t) != curVal.GetValueOrDefault(t)))
+            list.Add(new ChangeItem { Tweak = t, From = t.ValueText(curVal[t]), To = t.ValueText(desVal[t]), TurnsOn = true });
+        foreach (var t in tweaks.Where(t => t.IsToggle && desired.GetValueOrDefault(t) != current.GetValueOrDefault(t) && (desired[t] || t.Revert != null)))
+        {
+            bool prog = t.Category == Programs.Cat;
+            list.Add(new ChangeItem
+            {
+                Tweak = t, TurnsOn = desired[t],
+                From = prog ? (current[t] ? "установлена" : "нет") : current[t] ? "вкл" : "выкл",
+                To = prog ? (desired[t] ? "установить" : "удалить") : desired[t] ? "вкл" : "выкл"
+            });
+        }
+        return list.OrderBy(i => i.Tweak.Category).ToList();
+    }
+
+    /// <summary>Убрать одно изменение: вернуть отметку к текущему состоянию.</summary>
+    void Discard(Tweak t)
+    {
+        if (t.IsValue) desVal[t] = curVal.GetValueOrDefault(t);
+        else desired[t] = current.GetValueOrDefault(t);
+        SyncRow(t);
+        UpdatePending();
+    }
+
+    void ResetPending()
+    {
+        foreach (var t in tweaks)
+        {
+            if (t.IsValue) desVal[t] = curVal.GetValueOrDefault(t);
+            else if (!t.IsAction) desired[t] = current.GetValueOrDefault(t);
+        }
+        UpdatePending();
+        Build();
+        Toast.Pop(this, "Все отметки сброшены", Tone.Info);
+    }
+
+    void SyncRow(Tweak t)
+    {
+        foreach (var r in Rows().Where(r => r.T == t))
+        {
+            if (r.Toggle != null) r.Toggle.Checked = desired.GetValueOrDefault(t);
+            if (r.Seg != null) r.Seg.Value = desVal.GetValueOrDefault(t);
+            if (r.Slide != null) r.Slide.Value = desVal.GetValueOrDefault(t);
+            r.Changed = t.IsValue ? desVal.GetValueOrDefault(t) != curVal.GetValueOrDefault(t) : desired.GetValueOrDefault(t) != current.GetValueOrDefault(t);
+        }
+    }
+
     int Pending() =>
         tweaks.Count(t => t.IsToggle && desired.GetValueOrDefault(t) != current.GetValueOrDefault(t)) +
         tweaks.Count(t => t.IsValue && desVal.GetValueOrDefault(t) != curVal.GetValueOrDefault(t));
@@ -911,10 +964,12 @@ public partial class MainForm : Form
         int n = Pending();
         if (n == 0)
         {
+            applyBtn.Count = 0;
             var real = tweaks.Where(t => t.IsToggle && t.Category != StartupManager.Cat && t.Category != Programs.Cat).ToList();
             badge.SetStatus($"Применено {real.Count(t => current.GetValueOrDefault(t))} из {real.Count}", Theme.Muted);
         }
-        else badge.SetStatus($"Изменений к применению: {n}", Theme.Accent);
+        else badge.SetStatus($"Изменений к применению: {n} — показать", Theme.Accent);
+        applyBtn.Count = n;
     }
 
     async Task LoadStateAsync()
@@ -976,14 +1031,18 @@ public partial class MainForm : Form
             return;
         }
 
-        var risky = changes.Where(t => t.Risky && desired[t]).Select(t => "• " + t.Name).ToList();
-        string msg = $"Будет изменено настроек: {total}.";
-        var installs = changes.Where(t => t.Category == Programs.Cat).ToList();
-        if (installs.Count > 0) msg += $"\n\nПрограмм к установке/удалению: {installs.Count} — это может занять несколько минут.";
-        if (risky.Count > 0) msg += "\n\nСреди них рискованные:\n" + string.Join("\n", risky);
-        msg += "\n\nВсё попадёт в «Историю» — откатить можно в один клик.";
-        if (!Dialog.Confirm(this, "Применить изменения?", msg, "Применить", "Отмена", risky.Count > 0 ? Tone.Warning : Tone.Info))
-            return;
+        // окно проверки: можно убрать отдельные изменения, посмотреть ключи реестра или сбросить всё
+        var review = PendingItems();
+        using (var dlg = new ChangesDialog(review, Discard, ShowDetails))
+        {
+            var res = dlg.ShowDialog(this);
+            if (dlg.ResetAll) { ResetPending(); return; }
+            if (res != DialogResult.OK) return;
+        }
+        changes = changes.Where(t => desired.GetValueOrDefault(t) != current.GetValueOrDefault(t)).ToList();
+        vchanges = vchanges.Where(t => desVal.GetValueOrDefault(t) != curVal.GetValueOrDefault(t)).ToList();
+        total = changes.Count + vchanges.Count;
+        if (total == 0) return;
 
         var errors = new List<string>();
         bool makeRestore = restoreToggle.Checked;

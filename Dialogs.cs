@@ -513,3 +513,222 @@ class Prompt : RoundForm
         return p.ShowDialog(owner) == DialogResult.OK ? p.box.Text : null;
     }
 }
+
+/// <summary>Одно изменение в окне «Изменения к применению».</summary>
+sealed class ChangeItem
+{
+    public Tweak Tweak = null!;
+    public string From = "", To = "";
+    public bool TurnsOn;
+}
+
+/// <summary>
+/// Окно «Изменения к применению»: что, где и как изменится; × — убрать изменение,
+/// { } — точные ключи реестра и команды. Отсюда же — применить или сбросить всё.
+/// </summary>
+class ChangesDialog : RoundForm
+{
+    readonly List<ChangeItem> items;
+    readonly ChangesList list;
+    readonly Action<Tweak> discard;
+    readonly Action<Tweak> details;
+    readonly FlatBtn ok, reset;
+    int baseTop;
+    bool closing;
+    public bool ResetAll { get; private set; }
+
+    const int W = 680, Head = 84, Foot = 74;
+
+    public ChangesDialog(List<ChangeItem> items, Action<Tweak> discard, Action<Tweak> details)
+    {
+        this.items = items;
+        this.discard = discard;
+        this.details = details;
+        StartPosition = FormStartPosition.Manual;
+        KeyPreview = true;
+        Opacity = 0;
+
+        list = new ChangesList(items);
+        list.Remove += Remove;
+        list.Details += t => details(t);
+        Controls.Add(list);
+
+        ok = new FlatBtn("", "Применить") { Primary = true };
+        ok.Click += (_, _) => Finish(DialogResult.OK);
+        Controls.Add(ok);
+        var cancel = new FlatBtn("", "Закрыть");
+        cancel.Click += (_, _) => Finish(DialogResult.Cancel);
+        Controls.Add(cancel);
+        reset = new FlatBtn("", "Сбросить все") { Danger = true };
+        reset.Click += (_, _) => { ResetAll = true; Finish(DialogResult.Abort); };
+        Controls.Add(reset);
+
+        Resize_();
+        ok.Location = new Point(Width - 24 - ok.Width + ok.Pad, Height - 22 - ok.Height + ok.Pad);
+        cancel.Location = new Point(ok.Left + ok.Pad - cancel.Width - 8, ok.Top + ok.Pad);
+        reset.Location = new Point(24, ok.Top + ok.Pad);
+
+        KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Enter) Finish(DialogResult.OK);
+            if (e.KeyCode == Keys.Escape) Finish(DialogResult.Cancel);
+        };
+    }
+
+    void Resize_()
+    {
+        int rows = Math.Clamp(items.Count, 1, 9);
+        Size = new Size(W, Head + rows * ChangesList.RowH + 8 + Foot);
+        list.SetBounds(16, Head, W - 32, rows * ChangesList.RowH);
+        if (ok != null) ok.Location = new Point(Width - 24 - ok.Width + ok.Pad, Height - 22 - ok.Height + ok.Pad);
+    }
+
+    void Remove(ChangeItem it)
+    {
+        discard(it.Tweak);
+        items.Remove(it);
+        if (items.Count == 0) { Finish(DialogResult.Cancel); return; }
+        list.Refresh_();
+        Invalidate();
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        if (Owner != null)
+            Location = new Point(Owner.Left + (Owner.Width - Width) / 2, Owner.Top + Math.Max(40, (Owner.Height - Height) / 2));
+        baseTop = Top;
+        Motion.Run(240, p => { Opacity = p; Top = baseTop + (int)Math.Round(12 * (1 - p)); });
+    }
+
+    void Finish(DialogResult r)
+    {
+        if (closing) return;
+        closing = true;
+        Motion.Run(140, p => Opacity = 1 - p, Motion.InOut, 0, () => { DialogResult = r; Close(); });
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        var icon = new RectangleF(24, 22, 38, 38);
+        Theme.Fill(g, Theme.Lerp(Theme.Card, Theme.Accent, 0.22), icon, 19);
+        TextRenderer.DrawText(g, items.Count.ToString(), Theme.F(12f, FontStyle.Bold), Rectangle.Round(icon), Theme.Accent,
+            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        TextRenderer.DrawText(g, "Изменения к применению", Theme.F(12f, FontStyle.Bold), new Point(74, 20), Theme.Text);
+        int risky = items.Count(i => i.Tweak.Risky && i.TurnsOn);
+        int restart = items.Count(i => i.Tweak.NeedsRestart);
+        string sub = "× — убрать изменение · { } — что именно меняется";
+        if (risky > 0) sub = $"⚠ рискованных: {risky} · " + sub;
+        if (restart > 0) sub = $"после перезагрузки: {restart} · " + sub;
+        TextRenderer.DrawText(g, sub, Theme.Tiny, new Rectangle(76, 46, Width - 100, 18), risky > 0 ? Theme.Warn : Theme.Muted, TextFormatFlags.EndEllipsis);
+        using var pen = new Pen(Theme.Line);
+        g.DrawLine(pen, 0, Head - 8, Width, Head - 8);
+        g.DrawLine(pen, 0, Height - Foot + 4, Width, Height - Foot + 4);
+        TextRenderer.DrawText(g, "Всё попадёт в «Историю» — откат в один клик", Theme.Tiny,
+            new Rectangle(reset.Right + 12, Height - Foot + 4, Math.Max(0, Width - reset.Right - 12 - (Width - (ok.Left + ok.Pad)) - 160), Foot - 4),
+            Theme.Dim, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+    }
+}
+
+/// <summary>Список изменений с прокруткой колесом.</summary>
+class ChangesList : Control, IWheelTarget
+{
+    public const int RowH = 52;
+    readonly List<ChangeItem> items;
+    int top, hover = -1, hoverBtn = -1; // 0 — детали, 1 — убрать
+    public event Action<ChangeItem>? Remove;
+    public event Action<Tweak>? Details;
+
+    public ChangesList(List<ChangeItem> items)
+    {
+        this.items = items;
+        SetStyle(Theme.Smooth, true);
+    }
+
+    int Visible => Math.Max(1, Height / RowH);
+    public bool CanScroll => items.Count > Visible;
+
+    public void Wheel(int delta)
+    {
+        top = Math.Clamp(top - Math.Sign(delta), 0, Math.Max(0, items.Count - Visible));
+        Invalidate();
+    }
+
+    public void Refresh_()
+    {
+        top = Math.Clamp(top, 0, Math.Max(0, items.Count - Visible));
+        Invalidate();
+    }
+
+    Rectangle XBtn(int row) => new(Width - 40, row * RowH + (RowH - 30) / 2, 30, 30);
+    Rectangle InfoBtn(int row) => new(Width - 76, row * RowH + (RowH - 30) / 2, 30, 30);
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        int row = e.Y / RowH, i = top + row;
+        int h = i < items.Count ? i : -1;
+        int b = h < 0 ? -1 : XBtn(row).Contains(e.Location) ? 1 : InfoBtn(row).Contains(e.Location) ? 0 : -1;
+        if (h != hover || b != hoverBtn) { hover = h; hoverBtn = b; Cursor = b >= 0 ? Cursors.Hand : Cursors.Default; Invalidate(); }
+        base.OnMouseMove(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e) { hover = -1; hoverBtn = -1; Invalidate(); base.OnMouseLeave(e); }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        int row = e.Y / RowH, i = top + row;
+        if (i < items.Count)
+        {
+            if (XBtn(row).Contains(e.Location)) Remove?.Invoke(items[i]);
+            else if (InfoBtn(row).Contains(e.Location)) Details?.Invoke(items[i].Tweak);
+        }
+        base.OnMouseClick(e);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.Clear(Theme.Card);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        var flags = TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter;
+        for (int r = 0; r < Visible && top + r < items.Count; r++)
+        {
+            var it = items[top + r];
+            int y = r * RowH;
+            bool hot = top + r == hover;
+            if (hot) Theme.Fill(g, Theme.Hover, new RectangleF(0, y + 2, Width - 1, RowH - 4), 9);
+
+            var dot = new RectangleF(12, y + RowH / 2f - 4, 8, 8);
+            var col = it.Tweak.Risky && it.TurnsOn ? Theme.Warn : it.TurnsOn ? Theme.Accent : Theme.Muted;
+            Theme.Fill(g, Color.FromArgb(70, col), RectangleF.Inflate(dot, 3, 3), 7);
+            Theme.Fill(g, col, dot, 4);
+
+            string change = $"{it.From}  →  {it.To}";
+            int cw = Math.Min(200, TextRenderer.MeasureText(change, Theme.Semi).Width + 4);
+            int nameW = Width - 32 - cw - 96;
+            TextRenderer.DrawText(g, it.Tweak.Name + (it.Tweak.Risky && it.TurnsOn ? "  ⚠" : ""), Theme.Semi,
+                new Rectangle(32, y + 6, nameW, 22), Theme.Text, flags);
+            TextRenderer.DrawText(g, it.Tweak.Category + (it.Tweak.Group != null ? " · " + it.Tweak.Group : ""), Theme.Tiny,
+                new Rectangle(32, y + 26, nameW, 18), Theme.Muted, flags);
+            TextRenderer.DrawText(g, change, Theme.Semi, new Rectangle(Width - 86 - cw, y, cw, RowH), it.TurnsOn ? Theme.Accent : Theme.Muted,
+                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+
+            if (hot)
+            {
+                var ib = InfoBtn(r);
+                if (hoverBtn == 0) Theme.Fill(g, Theme.Line, ib, 8);
+                TextRenderer.DrawText(g, "", Theme.Icon, ib, hoverBtn == 0 ? Theme.Text : Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+            var xb = XBtn(r);
+            if (hot && hoverBtn == 1) Theme.Fill(g, Theme.Bad, xb, 8);
+            TextRenderer.DrawText(g, "", Theme.Icon, xb, hot && hoverBtn == 1 ? Color.White : Theme.Dim, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+        if (CanScroll)
+        {
+            float h = Height * (float)Visible / items.Count, yb = Height * (float)top / items.Count;
+            Theme.Fill(g, Theme.Line, new RectangleF(Width - 3, yb, 3, h), 1.5f);
+        }
+    }
+}
