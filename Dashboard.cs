@@ -158,8 +158,8 @@ class LiveWidget : Widget
 
     public LiveWidget() : base("Нагрузка", 28 + 12 + 2 * 84 + 8)
     {
-        cpuNow = new AnimFloat(0, () => Invalidate(false));
-        ramNow = new AnimFloat(0, () => Invalidate(false));
+        cpuNow = new AnimFloat(0, () => { });
+        ramNow = new AnimFloat(0, () => { });
     }
 
     public void Push(double c, double r, string ramLabel)
@@ -167,8 +167,9 @@ class LiveWidget : Widget
         Add(cpu, c);
         Add(ram, r);
         ramText = ramLabel;
-        cpuNow.To(c, 600);
-        ramNow.To(r, 600);
+        cpuNow.Set(c);
+        ramNow.Set(r);
+        Invalidate(false);
     }
 
     static void Add(Queue<double> q, double v)
@@ -465,7 +466,7 @@ class ScoreWidget : Widget
 class WatchBanner : Widget
 {
     readonly List<Tweak> reverted;
-    readonly System.Windows.Forms.Timer timer = new() { Interval = 40 };
+    readonly System.Windows.Forms.Timer timer = new() { Interval = 50 };
     public readonly FlatBtn Fix;
 
     public WatchBanner(List<Tweak> reverted) : base("", 84)
@@ -475,7 +476,7 @@ class WatchBanner : Widget
         Edge = Color.FromArgb(120, Theme.Warn);
         Fix = new FlatBtn("\uE777", "Вернуть всё") { Primary = true };
         Controls.Add(Fix);
-        timer.Tick += (_, _) => Invalidate(false);
+        timer.Tick += (_, _) => Invalidate(new Rectangle(8, 0, 76, Height), false);
         if (!Motion.Reduced) timer.Start();
     }
 

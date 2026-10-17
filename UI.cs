@@ -30,11 +30,18 @@ static class Motion
     /// <summary>cubic in-out — для плавных акцентов и исчезновений.</summary>
     public static double InOut(double t) => t < 0.5 ? 4 * t * t * t : 1 - Math.Pow(-2 * t + 2, 3) / 2;
 
+    [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint ms);
+
     static readonly Stopwatch clock = Stopwatch.StartNew();
     static readonly List<Tween> tweens = new();
-    static readonly System.Windows.Forms.Timer timer = new() { Interval = 8 };
+    static readonly System.Windows.Forms.Timer timer = new() { Interval = 7 };
 
-    static Motion() => timer.Tick += (_, _) => Tick();
+    static Motion()
+    {
+        // разрешение системного таймера 1 мс: анимации идут ровно ~120 кадров/с, а не рывками по 15,6 мс
+        try { timeBeginPeriod(1); } catch { }
+        timer.Tick += (_, _) => Tick();
+    }
 
     public static double Now => clock.Elapsed.TotalMilliseconds;
 
@@ -246,6 +253,7 @@ abstract class FadeIn : Control
     }
 
     void ApplyOffset() => Location = new Point(basePos.X, basePos.Y + (int)Math.Round((1 - Appear) * 18));
+    // Примечание: страницы появляются через Canvas.Reveal (снимки), Appear у живых карточек всегда 1.
 
     public void Hide0()
     {
@@ -306,40 +314,42 @@ abstract class Surface : FadeIn
         var reach = ClientRectangle;
         reach.Inflate(Spotlight.Reach, Spotlight.Reach);
         bool near = !Motion.Reduced && reach.Contains(cur);
-        if (near)
+        if (near) EnsureRegions(path);
+        if (near && bodyRegion != null)
         {
-            // мягкий блик внутри карточки
-            const float r = 190;
-            using var spot = new GraphicsPath();
-            spot.AddEllipse(cur.X - r, cur.Y - r, r * 2, r * 2);
-            using var glow = new PathGradientBrush(spot)
-            {
-                CenterColor = Color.FromArgb((int)(16 * Appear), 255, 255, 255),
-                SurroundColors = new[] { Color.FromArgb(0, 255, 255, 255) }
-            };
-            var clip = g.Clip;
-            g.SetClip(path);
-            g.FillPath(glow, spot);
-            g.Clip = clip;
+            // мягкий блик внутри карточки — готовая картинка, обрезанная по форме тела
+            var st = g.Save();
+            g.SetClip(bodyRegion, CombineMode.Intersect);
+            g.DrawImageUnscaled(Spotlight.Soft, cur.X - Spotlight.R, cur.Y - Spotlight.R);
+            g.Restore(st);
         }
 
         PaintBody(g, Rectangle.Round(body));
 
         using (var pen = new Pen(Glass.Scale(Edge ?? Glass.Border, Appear))) g.DrawPath(pen, path);
-        if (near)
+        if (near && edgeRegion != null)
         {
             // рамка подсвечивается акцентом там, где ближе курсор
-            const float r = 210;
-            using var spot = new GraphicsPath();
-            spot.AddEllipse(cur.X - r, cur.Y - r, r * 2, r * 2);
-            using var glow = new PathGradientBrush(spot)
-            {
-                CenterColor = Color.FromArgb((int)(230 * Appear), Theme.Accent),
-                SurroundColors = new[] { Color.FromArgb(0, Theme.Accent) }
-            };
-            using var pen = new Pen(glow, 1.6f);
-            g.DrawPath(pen, path);
+            var st = g.Save();
+            g.SetClip(edgeRegion, CombineMode.Intersect);
+            g.DrawImageUnscaled(Spotlight.Edge, cur.X - Spotlight.R, cur.Y - Spotlight.R);
+            g.Restore(st);
         }
+    }
+
+    Region? bodyRegion, edgeRegion;
+    Size regionsFor;
+
+    void EnsureRegions(GraphicsPath path)
+    {
+        if (bodyRegion != null && regionsFor == Size) return;
+        bodyRegion?.Dispose();
+        edgeRegion?.Dispose();
+        bodyRegion = new Region(path);
+        using var ring = (GraphicsPath)path.Clone();
+        using (var pen = new Pen(Color.Black, 2f)) ring.Widen(pen);
+        edgeRegion = new Region(ring);
+        regionsFor = Size;
     }
 
     protected virtual void PaintBody(Graphics g, Rectangle r) { }
@@ -392,7 +402,7 @@ class Card : Surface
 class SkeletonCard : Surface
 {
     readonly int rows;
-    readonly System.Windows.Forms.Timer timer = new() { Interval = 16 };
+    readonly System.Windows.Forms.Timer timer = new() { Interval = 30 };
 
     public SkeletonCard(int rows) : base("")
     {
@@ -679,7 +689,14 @@ class NavCanvas : Canvas
 
     public NavCanvas()
     {
-        Ind = new AnimFloat(0, () => { foreach (Control c in Controls) c.Invalidate(); });
+        double last = 0;
+        Ind = new AnimFloat(0, () =>
+        {
+            double lo = Math.Min(last, Ind!.Value) - 2, hi = Math.Max(last, Ind.Value) + ItemH + 2;
+            foreach (Control c in Controls)
+                if (c.Bottom > lo && c.Top < hi) c.Invalidate();
+            last = Ind.Value;
+        });
     }
 
     protected override void OnPaint(PaintEventArgs e)
