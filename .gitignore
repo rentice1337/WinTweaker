@@ -3,5 +3,7 @@ obj/
 publish/
 .vs/
 .vscode/
+.idea/
 *.user
 *.suo
+*.log

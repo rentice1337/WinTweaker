@@ -147,7 +147,9 @@ public partial class MainForm
             string tag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
             string url = doc.RootElement.GetProperty("html_url").GetString() ?? $"https://github.com/{Repo}/releases";
             if (!Version.TryParse(tag.TrimStart('v', 'V'), out var latest) || !Version.TryParse(Logo.Version, out var mine)) return;
-            if (latest > mine)
+            // «2.0» и «2.0.0» — одна версия: сравниваем по трём числам, недостающее считаем нулём
+            static Version Norm(Version v) => new(v.Major, v.Minor, Math.Max(0, v.Build));
+            if (Norm(latest) > Norm(mine))
             {
                 if (Dialog.Confirm(this, $"Доступна версия {tag}", $"У вас v{Logo.Version}. Открыть страницу загрузки?", "Открыть", "Позже"))
                     Live.Start(url);

@@ -1,0 +1,16 @@
+name: Идея
+description: Предложить новую настройку или функцию
+labels: [идея]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Что хочется
+      description: Опишите, что должно появиться и какую задачу это решит.
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: Как это сделать (если знаете)
+      description: Ключ реестра, команда, ссылка на описание от Microsoft — всё, что поможет.

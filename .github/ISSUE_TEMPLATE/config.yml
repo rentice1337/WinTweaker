@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Сообщить об уязвимости
+    url: https://github.com/rentice1337/WinTweaker/security/advisories/new
+    about: Уязвимости — приватно, не в открытом issue.
+  - name: Последняя версия
+    url: https://github.com/rentice1337/WinTweaker/releases/latest
+    about: Возможно, ошибка уже исправлена — проверьте последнюю версию.

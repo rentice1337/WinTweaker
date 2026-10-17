@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # держать действия GitHub Actions в актуальном состоянии
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

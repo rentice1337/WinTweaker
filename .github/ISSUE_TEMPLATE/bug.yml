@@ -1,0 +1,49 @@
+name: Ошибка
+description: Что-то работает не так или программа вылетает
+labels: [ошибка]
+body:
+  - type: markdown
+    attributes:
+      value: Спасибо! Чем точнее описание, тем быстрее получится исправить.
+  - type: textarea
+    id: what
+    attributes:
+      label: Что случилось
+      description: Что вы делали, что ожидали и что произошло на самом деле.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как повторить
+      placeholder: |
+        1. Открыть раздел …
+        2. Нажать …
+        3. Видно …
+  - type: textarea
+    id: details
+    attributes:
+      label: Текст ошибки
+      description: Если программа показала окно с ошибкой — нажмите «Подробности» и вставьте текст сюда.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Версия WinTweak
+      description: Видна внизу бокового меню.
+      placeholder: "2.0.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Версия Windows
+      description: "Win+R → winver"
+      placeholder: "Windows 10 22H2 (19045.5011)"
+    validations:
+      required: true
+  - type: textarea
+    id: screens
+    attributes:
+      label: Скриншоты
+      description: Перетащите картинки сюда, если они помогут.

@@ -18,8 +18,9 @@
     <Company>rentice1337</Company>
     <Authors>rentice1337</Authors>
     <AssemblyTitle>WinTweak — настройка Windows 10</AssemblyTitle>
-    <Description>Настройка Windows 10</Description>
-    <Copyright>MIT License</Copyright>
+    <Description>WinTweak — настройка Windows 10 и игр</Description>
+    <Copyright>© 2026 rentice1337 · MIT License</Copyright>
+    <RepositoryUrl>https://github.com/rentice1337/WinTweaker</RepositoryUrl>
   </PropertyGroup>
 
   <!-- Один самодостаточный .exe: dotnet publish -c Release -->

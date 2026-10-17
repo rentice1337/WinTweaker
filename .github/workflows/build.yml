@@ -1,10 +1,12 @@
 name: Build
 
-# Сборка при каждом пуше и PR — проверка, что проект компилируется (артефакт можно скачать в Actions).
-# Релиз — любым способом, WinTweaker.exe прикрепится сам:
-#   • создать релиз на сайте (Releases → Draft a new release) с любым тегом: 1.6.0 или v1.6.0;
-#   • git tag v1.2.3 && git push origin v1.2.3;
-#   • дособрать уже созданный релиз: Actions → Build → Run workflow → указать тег.
+# Сборка при каждом пуше и pull request — проверка, что проект компилируется (exe лежит в артефактах запуска).
+#
+# Релиз — WinTweaker.exe и контрольная сумма прикрепляются сами:
+#   • на сайте: Releases → Draft a new release → новый тег (v2.0.0 или 2.0.0) → Publish;
+#   • из консоли: git tag v2.0.0 && git push origin v2.0.0;
+#   • к уже созданному релизу без exe: Actions → Build → Run workflow → указать тег.
+# Описание релиза дополняется разделом этой версии из CHANGELOG.md и инструкцией по запуску.
 on:
   push:
     branches: [main]
@@ -15,18 +17,23 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Тег релиза, к которому приложить WinTweaker.exe (например 1.5.5). Пусто — просто сборка.'
+        description: 'Тег релиза, к которому приложить WinTweaker.exe (например v2.0.0). Пусто — просто сборка.'
         required: false
         default: ''
 
 permissions:
   contents: write
 
+concurrency:
+  group: build-${{ github.event.inputs.tag || github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     # релиз с тегом v* уже собирается по пушу тега — второй раз не нужно
     if: github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'v')
     runs-on: windows-latest
+    timeout-minutes: 20
     env:
       TAG: ${{ github.event.inputs.tag || (github.event_name == 'release' && github.event.release.tag_name) || (github.ref_type == 'tag' && github.ref_name) || '' }}
     steps:
@@ -42,7 +49,10 @@ jobs:
         shell: pwsh
         run: |
           $v = '0.0.0'
-          if ($env:TAG) { $v = $env:TAG.TrimStart('v', 'V') }
+          if ($env:TAG) {
+            $v = $env:TAG.TrimStart('v', 'V')
+            if ($v -notmatch '^\d+\.\d+(\.\d+)?$') { throw "Тег '$env:TAG' — не версия. Нужно вида v2.0.0 или 2.0.0" }
+          }
           "VERSION=$v" >> $env:GITHUB_ENV
 
       - name: Publish
@@ -59,7 +69,13 @@ jobs:
 
       - name: Checksum
         shell: pwsh
-        run: (Get-FileHash publish/WinTweaker.exe -Algorithm SHA256).Hash + '  WinTweaker.exe' | Out-File publish/WinTweaker.exe.sha256 -Encoding ascii
+        run: |
+          $hash = (Get-FileHash publish/WinTweaker.exe -Algorithm SHA256).Hash
+          "$hash  WinTweaker.exe" | Out-File publish/WinTweaker.exe.sha256 -Encoding ascii
+          "SHA256=$hash" >> $env:GITHUB_ENV
+          $mb = [math]::Round((Get-Item publish/WinTweaker.exe).Length / 1MB, 1)
+          "SIZE_MB=$mb" >> $env:GITHUB_ENV
+          "WinTweaker.exe: $mb МБ, SHA-256 $hash"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -68,26 +84,54 @@ jobs:
             publish/WinTweaker.exe
             publish/WinTweaker.exe.sha256
 
+      - name: Release notes
+        if: env.TAG != ''
+        shell: pwsh
+        run: |
+          # раздел этой версии из CHANGELOG.md: от «## [2.0.0]» до следующего «## »
+          $notes = ''
+          if (Test-Path CHANGELOG.md) {
+            $lines = Get-Content CHANGELOG.md -Encoding utf8
+            $ver = [regex]::Escape($env:VERSION)
+            $start = -1
+            for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match "^## \[?v?$ver\]?(\s|$)") { $start = $i; break } }
+            if ($start -ge 0) {
+              $body = @()
+              for ($i = $start + 1; $i -lt $lines.Count -and $lines[$i] -notmatch '^## '; $i++) { $body += $lines[$i] }
+              $notes = ($body -join "`n").Trim()
+            }
+          }
+          $repo = "${{ github.repository }}"
+          $text = @"
+          ## Скачать
+
+          **[WinTweaker.exe](https://github.com/$repo/releases/download/$env:TAG/WinTweaker.exe)** ($env:SIZE_MB МБ) — один файл, устанавливать ничего не нужно. Нужны Windows 10 x64 и права администратора.
+
+          ### Windows предупреждает при первом запуске
+          У программы нет платного сертификата подписи, поэтому Windows спрашивает подтверждение:
+          - синее окно SmartScreen → **Подробнее** → **Выполнить в любом случае**;
+          - или заранее: правый клик по файлу → **Свойства** → **Разблокировать** → ОК.
+
+          ### Проверка файла
+          SHA-256: ``$env:SHA256``
+          ``````
+          certutil -hashfile WinTweaker.exe SHA256
+          ``````
+          Файл собран автоматически в [GitHub Actions](https://github.com/$repo/actions/runs/${{ github.run_id }}) из кода этого релиза.
+          "@
+          if ($notes) { $text = "## Что нового`n`n$notes`n`n$text" }
+          Set-Content release-notes.md $text -Encoding utf8
+          Get-Content release-notes.md
+
       - name: Release
         if: env.TAG != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
-          # релиз, созданный на сайте: его описание сохраняем, инструкция добавляется ниже
-          append_body: true
           files: |
             publish/WinTweaker.exe
             publish/WinTweaker.exe.sha256
-          generate_release_notes: true
-          body: |
-            ### Скачать
-            **WinTweaker.exe** ниже — один файл, ничего ставить не нужно. Запускается от администратора.
-
-            ### «Неизвестный издатель» / «Windows защитил ваш компьютер»
-            У программы нет платной цифровой подписи, поэтому Windows предупреждает при первом запуске. Это нормально для бесплатных программ с GitHub.
-            - Окно «Не удаётся проверить издателя» → снимите галочку «Всегда спрашивать» и нажмите **Запустить**.
-            - Синее окно SmartScreen → **Подробнее** → **Выполнить в любом случае**.
-            - Или заранее: правый клик по файлу → **Свойства** → внизу галочка **Разблокировать** → ОК.
-
-            Проверить, что файл не подменён: сравните SHA-256 из `WinTweaker.exe.sha256` с выводом `certutil -hashfile WinTweaker.exe SHA256`.
-
+          body_path: release-notes.md
+          # релиз, созданный на сайте: его описание сохраняется, наше добавляется ниже
+          append_body: true
+          make_latest: true
