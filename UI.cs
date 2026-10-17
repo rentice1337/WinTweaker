@@ -700,7 +700,7 @@ static class Logo
         get
         {
             var v = typeof(Logo).Assembly.GetName().Version;
-            return v == null ? "1.0" : v.Build > 0 ? $"{v.Major}.{v.Minor}.{v.Build}" : $"{v.Major}.{v.Minor}";
+            return v == null ? "1.0.0" : $"{v.Major}.{v.Minor}.{Math.Max(0, v.Build)}"; // как в теге релиза: 2.0.0
         }
     }
 
