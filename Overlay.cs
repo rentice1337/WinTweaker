@@ -37,6 +37,8 @@ static class OverlaySettings
             AppSettings.Set("ov.y", value.Y.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture));
         }
     }
+    /// <summary>Монитор своего места (имя устройства Windows, например \\.\DISPLAY2).</summary>
+    public static string Monitor { get => AppSettings.Get("ov.mon", ""); set => AppSettings.Set("ov.mon", value); }
     /// <summary>Непрозрачность фона, %.</summary>
     public static int Background { get => Int("ov.bg", 70, 0, 100); set => AppSettings.Set("ov.bg", value.ToString()); }
     public static bool Auto { get => AppSettings.Get("ov.auto", "1") == "1"; set => AppSettings.Set("ov.auto", value ? "1" : "0"); }

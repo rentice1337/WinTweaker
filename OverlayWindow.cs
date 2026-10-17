@@ -27,8 +27,10 @@ static class Overlay
     public static void Hide()
     {
         autoShown = false;
+        bool wasEditing = Editing;
         window?.Close();
         window = null;
+        if (wasEditing) RaiseEditingChanged();
     }
 
     /// <summary>Пересобрать после смены настроек (если показан).</summary>
@@ -45,8 +47,13 @@ static class Overlay
     public static void Edit(bool on)
     {
         if (on && !Visible) Show();
-        window?.SetEditing(on);
+        if (on) window?.SetEditing(true);
+        else window?.Finish();
     }
+
+    /// <summary>Режим перемещения включили или закончили (в том числе двойным кликом по оверлею).</summary>
+    public static event Action? EditingChanged;
+    internal static void RaiseEditingChanged() => EditingChanged?.Invoke();
 
     public static void GameStarted()
     {
@@ -128,35 +135,149 @@ sealed class OverlayWindow : LayeredForm
     }
 
     // ───── перемещение мышью ─────
+    // Тащим сами, без системного перетаскивания за «заголовок»: так Windows не прилепляет оверлей к краю,
+    // не разворачивает его на весь экран и не даёт увести за пределы монитора.
+
+    Point grab;
+    bool dragging;
 
     public void SetEditing(bool value)
     {
         if (Editing == value || IsDisposed) return;
         Editing = value;
+        StopDrag();
         int ex = GetWindowLong(Handle, GWL_EXSTYLE);
         SetWindowLong(Handle, GWL_EXSTYLE, value ? ex & ~WS_EX_TRANSPARENT : ex | WS_EX_TRANSPARENT);
+        Cursor = value ? Cursors.SizeAll : Cursors.Default;
         Frame();
+        Overlay.RaiseEditingChanged();
+    }
+
+    void StopDrag()
+    {
+        dragging = false;
+        if (Capture) Capture = false;
     }
 
     protected override void WndProc(ref Message m)
     {
-        const int WM_NCHITTEST = 0x84, WM_EXITSIZEMOVE = 0x232, WM_NCLBUTTONDBLCLK = 0xA3;
-        if (Editing)
-        {
-            if (m.Msg == WM_NCHITTEST) { m.Result = (IntPtr)2; return; } // HTCAPTION — тянуть за любое место
-            if (m.Msg == WM_EXITSIZEMOVE) SavePlace();
-            if (m.Msg == WM_NCLBUTTONDBLCLK) { SavePlace(); SetEditing(false); return; }
-        }
+        const int WM_NCHITTEST = 0x84, WM_MOUSEACTIVATE = 0x21, WM_SYSCOMMAND = 0x112;
+        if (m.Msg == WM_MOUSEACTIVATE) { m.Result = (IntPtr)3; return; } // MA_NOACTIVATE: клик не забирает фокус у игры
+        if (m.Msg == WM_NCHITTEST && Editing) { m.Result = (IntPtr)1; return; } // HTCLIENT — мышь обрабатываем сами
+        if (m.Msg == WM_SYSCOMMAND) return; // никаких «развернуть», «свернуть», «переместить» от системы
         base.WndProc(ref m);
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (!Editing || e.Button != MouseButtons.Left) return;
+        if (e.Clicks >= 2) { Finish(); return; }
+        var c = Cursor.Position;
+        grab = new Point(c.X - Left, c.Y - Top);
+        dragging = true;
+        Capture = true;
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!dragging) return;
+        var c = Cursor.Position;
+        var area = Screen.FromPoint(c).Bounds;
+        MoveTo(Fit(new Point(c.X - grab.X, c.Y - grab.Y), area));
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (!dragging) return;
+        StopDrag();
+        SavePlace();
+    }
+
+    protected override void OnMouseCaptureChanged(EventArgs e)
+    {
+        base.OnMouseCaptureChanged(e);
+        if (dragging && !Capture) { dragging = false; SavePlace(); }
+    }
+
+    /// <summary>Закончить перемещение (двойной клик или кнопка «Готово»).</summary>
+    public void Finish()
+    {
+        StopDrag();
+        SavePlace();
+        SetEditing(false);
+    }
+
+    /// <summary>Поставить окно так, чтобы оно целиком было на экране.</summary>
+    Point Fit(Point p, Rectangle area) => new(
+        Math.Clamp(p.X, area.Left, Math.Max(area.Left, area.Right - Width)),
+        Math.Clamp(p.Y, area.Top, Math.Max(area.Top, area.Bottom - Height)));
+
+    void MoveTo(Point p)
+    {
+        if (Location == p) return;
+        SetWindowPos(Handle, (IntPtr)(-1) /* TOPMOST */, p.X, p.Y, 0, 0, 0x0001 /* NOSIZE */ | 0x0010 /* NOACTIVATE */);
     }
 
     void SavePlace()
     {
-        var sc = Screen.FromHandle(Handle).Bounds;
-        double fx = sc.Width > Width ? (double)(Left - sc.Left) / (sc.Width - Width) : 0;
-        double fy = sc.Height > Height ? (double)(Top - sc.Top) / (sc.Height - Height) : 0;
+        var sc = Screen.FromRectangle(Bounds);
+        var b = sc.Bounds;
+        double fx = b.Width > Width ? (double)(Left - b.Left) / (b.Width - Width) : 0;
+        double fy = b.Height > Height ? (double)(Top - b.Top) / (b.Height - Height) : 0;
         OverlaySettings.Place = (Math.Clamp(fx, 0, 1), Math.Clamp(fy, 0, 1));
+        OverlaySettings.Monitor = sc.DeviceName;
         OverlaySettings.Corner = 4;
+        placeScreen = sc;
+    }
+
+    // ───── на каком мониторе ─────
+
+    Screen? placeScreen, lastScreen;
+
+    /// <summary>
+    /// Монитор для оверлея. Своё место — тот монитор, где его поставили. Угол — монитор игры (окна на переднем плане);
+    /// если на переднем плане сам WinTweak, оверлей остаётся где был и не прыгает между мониторами.
+    /// </summary>
+    Screen TargetScreen()
+    {
+        if (OverlaySettings.Corner == 4)
+        {
+            if (placeScreen == null)
+            {
+                string dev = OverlaySettings.Monitor;
+                placeScreen = Screen.AllScreens.FirstOrDefault(s => s.DeviceName == dev) ?? Screen.PrimaryScreen ?? Screen.AllScreens[0];
+            }
+            return placeScreen;
+        }
+        var fg = GetForegroundWindow();
+        GetWindowThreadProcessId(fg, out uint pid);
+        if (fg != IntPtr.Zero && pid != Environment.ProcessId) lastScreen = Screen.FromHandle(fg);
+        return lastScreen ??= Screen.PrimaryScreen ?? Screen.AllScreens[0];
+    }
+
+    void Place(Rectangle b)
+    {
+        if (WindowState != FormWindowState.Normal) WindowState = FormWindowState.Normal;
+        const int pad = 6;
+        int corner = OverlaySettings.Corner;
+        Point p;
+        if (corner == 4)
+        {
+            var (fx, fy) = OverlaySettings.Place;
+            p = new Point(b.Left + (int)Math.Round(fx * Math.Max(0, b.Width - Width)), b.Top + (int)Math.Round(fy * Math.Max(0, b.Height - Height)));
+        }
+        else
+        {
+            p = new Point(corner is 0 or 2 ? b.Left + pad : b.Right - Width - pad,
+                          corner is 0 or 1 ? b.Top + pad : b.Bottom - Height - pad);
+        }
+        p = Fit(p, b);
+        // поверх всех — подтверждаем раз в 2 с (игры в оконном режиме любят перекрывать)
+        if (Location != p || tick % 20 == 0)
+            SetWindowPos(Handle, (IntPtr)(-1), p.X, p.Y, 0, 0, 0x0001 | 0x0010);
     }
 
     // ───── данные кадра ─────
@@ -227,7 +348,7 @@ sealed class OverlayWindow : LayeredForm
         FpsMeter.Pid = TargetPid();
         model = Build();
 
-        var screen = Screen.FromHandle(GetForegroundWindow());
+        var screen = TargetScreen();
         if (tick % 50 == 1)
         {
             try { targetHz = Displays.All().FirstOrDefault(d => d.Device == screen.DeviceName)?.Hz ?? 0; } catch { targetHz = 0; }
@@ -242,26 +363,8 @@ sealed class OverlayWindow : LayeredForm
         alpha += (target - alpha) * (target > alpha ? 0.6 : 0.15);
         Alpha = (byte)Math.Clamp(alpha, 0, 255);
 
-        if (!Editing)
-        {
-            var b = screen.Bounds;
-            int pad = 6;
-            int corner = OverlaySettings.Corner;
-            int x, y;
-            if (corner == 4)
-            {
-                var (fx, fy) = OverlaySettings.Place;
-                x = b.Left + (int)Math.Round(fx * (b.Width - Width));
-                y = b.Top + (int)Math.Round(fy * (b.Height - Height));
-            }
-            else
-            {
-                x = corner is 0 or 2 ? b.Left + pad : b.Right - Width - pad;
-                y = corner is 0 or 1 ? b.Top + pad : b.Bottom - Height - pad;
-            }
-            if (Location != new Point(x, y) || tick % 20 == 0)
-                SetWindowPos(Handle, (IntPtr)(-1) /* TOPMOST */, x, y, 0, 0, 0x0001 /* NOSIZE */ | 0x0010 /* NOACTIVATE */);
-        }
+        if (!Editing) Place(screen.Bounds);
+        else if (!dragging) MoveTo(Fit(Location, Screen.FromRectangle(Bounds).Bounds)); // вырос — не вылезаем за край
         Present();
     }
 
@@ -347,6 +450,13 @@ sealed class OverlayWindow : LayeredForm
         var m = model ?? Build();
         g.TranslateTransform(M, M);
         var rect = new RectangleF(0.5f, 0.5f, Width - M * 2 - 1, Height - M * 2 - 1);
+        if (Editing)
+        {
+            // полностью прозрачные пиксели пропускают мышь насквозь — даём, за что взяться
+            using var grip = Theme.Round(RectangleF.Inflate(rect, 4, 4), 12);
+            using var fill = new SolidBrush(Color.FromArgb(70, Theme.Accent));
+            g.FillPath(fill, grip);
+        }
         switch (style)
         {
             case 0: Capsule(g, m, rect); break;

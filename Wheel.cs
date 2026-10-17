@@ -44,6 +44,9 @@ abstract class LayeredForm : Form
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
+        // без этого Windows может «прилепить» или развернуть окно при перетаскивании к краю экрана
+        MaximizeBox = false;
+        MinimizeBox = false;
     }
 
     protected override CreateParams CreateParams

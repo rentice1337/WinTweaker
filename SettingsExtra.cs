@@ -49,14 +49,23 @@ public partial class MainForm
             Seg(OverlaySettings.Styles, OverlaySettings.Style, v => { OverlaySettings.Style = v; Reload(); }));
         var corner = Seg(new[] { "↖", "↗", "↙", "↘" }, Math.Min(3, OverlaySettings.Corner), v => { OverlaySettings.Corner = v; Reload(); });
         card.AddCustom("Угол", "Или перетащите мышью — кнопка ниже", corner);
-        var move = new FlatBtn("\uE7C2", "Переместить");
+        var move = new FlatBtn("\uE7C2", Overlay.Editing ? "Готово" : "Переместить");
         move.Click += (_, _) =>
         {
             bool now = !Overlay.Editing;
             Overlay.Edit(now);
-            move.Text = now ? "Готово" : "Переместить";
-            if (now) Toast.Pop(this, "Перетащите оверлей мышью, двойной клик по нему — готово", Tone.Info);
+            if (now) Toast.Pop(this, "Перетащите оверлей мышью. Двойной клик по нему или «Готово» — сохранить место", Tone.Info);
+            else Toast.Pop(this, "Место оверлея сохранено");
         };
+        Action sync = () =>
+        {
+            if (move.IsDisposed) return;
+            move.Text = Overlay.Editing ? "Готово" : "Переместить";
+            move.Invalidate();
+        };
+        Overlay.EditingChanged += sync;
+        move.Disposed += (_, _) => Overlay.EditingChanged -= sync;
+
         card.AddCustom("Своё место", "Оверлей можно поставить в любую точку экрана", move);
         var bg = new Slider(0, 100, 10, v => v == 0 ? "без фона" : $"фон {v}%") { Value = OverlaySettings.Background };
         bg.Changed += v => { OverlaySettings.Background = v; Reload(); };

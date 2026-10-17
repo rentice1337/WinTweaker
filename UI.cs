@@ -1429,21 +1429,32 @@ class TabStrip : FadeIn
         this.tabs = tabs;
         this.selected = selected;
         this.pending = pending;
-        Wide = true;
-        Height = TabH + 12;
-        Cursor = Cursors.Hand;
+        // анимации создаём до первой смены размера: Height вызывает Arrange
         move = new AnimFloat(1, () => Invalidate());
         hoverA = new AnimFloat(0, () => Invalidate());
+        Wide = true;
+        Cursor = Cursors.Hand;
+        Height = TabH + 12;
     }
+
+    bool arranging;
 
     protected override void OnSizeChanged(EventArgs e)
     {
         base.OnSizeChanged(e);
-        if (tabs == null) return;
+        if (tabs == null || move == null || arranging) return;
         Arrange();
     }
 
     void Arrange()
+    {
+        if (arranging) return;
+        arranging = true;
+        try { ArrangeCore(); }
+        finally { arranging = false; }
+    }
+
+    void ArrangeCore()
     {
         rects.Clear();
         float x = 0, y = 2;
@@ -1458,6 +1469,7 @@ class TabStrip : FadeIn
         if (Height != h) Height = h;
         // подсветка переезжает с прошлой вкладки этого раздела
         int i = Array.FindIndex(tabs, t => t.Cat == selected);
+        if (Width <= 0) return; // ещё не разложено — подсветку переносим при настоящей ширине
         if (i >= 0 && last is { } l && l.Section == section && l.Rect != rects[i] && move.Value >= 1)
         {
             from = l.Rect;
