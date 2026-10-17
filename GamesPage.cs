@@ -125,7 +125,7 @@ public partial class MainForm
         // ── фоновые программы ──
         var bgw = new BgAppsWidget();
         bgw.Resized += Relayout;
-        bgw.Refresh.Click += async (_, _) => await LoadBgApps(bgw);
+        bgw.RefreshBtn.Click += async (_, _) => await LoadBgApps(bgw);
         bgw.CloseNow.Click += async (_, _) => await CloseBgApps(bgw);
         cv.Controls.Add(bgw);
         bgWidget = bgw;
