@@ -141,7 +141,8 @@ static class GameLibrary
 
     // ───────── Steam ─────────
 
-    static readonly string[] SteamSkip = { "Steamworks Common", "Redistributable", "Proton", "Steam Linux Runtime", "SteamVR", "Steam Audio", "Dedicated Server", "SDK" };
+    static readonly string[] SteamSkip = { "Steamworks Common", "Redistributable", "Proton", "Steam Linux Runtime", "SteamVR", "Steam Audio", "Dedicated Server", "SDK",
+        "Wallpaper Engine", "OBS Studio", "Blender", "Soundpad", "Lossless Scaling", "Aseprite", "VTube Studio", "Krita", "RPG Maker" };
 
     public static string? SteamPath()
     {
