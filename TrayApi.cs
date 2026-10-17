@@ -8,7 +8,7 @@ public partial class MainForm
     public IReadOnlyList<Tweak> AllTweaks => tweaks;
 
     /// <summary>Разделы бокового меню (название и значок) — для палитры пульта.</summary>
-    public static IEnumerable<(string Cat, string Glyph)> Pages => Nav.SelectMany(s => s.Items);
+    public static IEnumerable<(string Cat, string Glyph)> Pages => AllPages;
     public const string GamesPageName = GamesHub;
 
     public void OpenPage(string cat)

@@ -826,6 +826,15 @@ class NavItem : Control
             }
         }
 
+        else if (s > 0.01)
+        {
+            // пункт вне общего меню («Настройки» внизу) рисует свою подсветку
+            var pill = new RectangleF(0, 0, Width - 1, Height - 1);
+            Theme.Fill(g, Color.FromArgb((int)(26 * s), 255, 255, 255), pill, 9);
+            var bar = new RectangleF(1, 8, 3, Height - 16);
+            Theme.Fill(g, Color.FromArgb((int)(255 * s), Theme.Accent), bar, 1.5f);
+        }
+
         int nudge = (int)Math.Round(3 * h * (1 - s));
         TextRenderer.DrawText(g, glyph, Theme.Icon, new Rectangle(10 + nudge, 0, 26, Height),
             Theme.Lerp(Theme.Muted, Theme.Accent, Math.Max(s, h * 0.7)),
@@ -1361,5 +1370,130 @@ class Slider : Control
         Theme.Fill(g, Theme.Fade(this, Color.White), kn, d / 2);
         TextRenderer.DrawText(g, fmt(val), Theme.Semi, new Rectangle(Width - LabelW, 0, LabelW, Height),
             Theme.Fade(this, Theme.Text), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+    }
+}
+
+/// <summary>
+/// Вкладки раздела: «пилюли» с иконками, переносятся на новую строку, если не помещаются.
+/// Подсветка выбранной вкладки переезжает со старого места, число на вкладке — сколько изменений в ней ждут «Применить».
+/// </summary>
+class TabStrip : FadeIn
+{
+    readonly (string Cat, string Glyph, string Label)[] tabs;
+    readonly string selected, section;
+    readonly Func<string, int> pending;
+    readonly List<RectangleF> rects = new();
+    readonly AnimFloat move, hoverA;
+    int hover = -1;
+    RectangleF from;
+    static (string Section, RectangleF Rect)? last;
+    public event Action<string>? Picked;
+    const int TabH = 34, Gap = 6;
+
+    public TabStrip(string section, (string Cat, string Glyph, string Label)[] tabs, string selected, Func<string, int> pending)
+    {
+        this.section = section;
+        this.tabs = tabs;
+        this.selected = selected;
+        this.pending = pending;
+        Wide = true;
+        Height = TabH + 12;
+        Cursor = Cursors.Hand;
+        move = new AnimFloat(1, () => Invalidate());
+        hoverA = new AnimFloat(0, () => Invalidate());
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        if (tabs == null) return;
+        Arrange();
+    }
+
+    void Arrange()
+    {
+        rects.Clear();
+        float x = 0, y = 2;
+        foreach (var t in tabs)
+        {
+            float w = TextRenderer.MeasureText(t.Label, Theme.Semi).Width + 50;
+            if (x > 0 && x + w > Width) { x = 0; y += TabH + Gap; }
+            rects.Add(new RectangleF(x, y, w, TabH));
+            x += w + Gap;
+        }
+        int h = (int)(y + TabH + 12);
+        if (Height != h) Height = h;
+        // подсветка переезжает с прошлой вкладки этого раздела
+        int i = Array.FindIndex(tabs, t => t.Cat == selected);
+        if (i >= 0 && last is { } l && l.Section == section && l.Rect != rects[i] && move.Value >= 1)
+        {
+            from = l.Rect;
+            move.Set(0);
+            move.To(1, 380);
+        }
+        if (i >= 0) last = (section, rects[i]);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        int h = rects.FindIndex(r => r.Contains(e.Location));
+        if (h != hover) { hover = h; hoverA.Set(0); if (h >= 0) hoverA.To(1, 160); Invalidate(); }
+        base.OnMouseMove(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e) { hover = -1; Invalidate(); base.OnMouseLeave(e); }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        int i = rects.FindIndex(r => r.Contains(e.Location));
+        if (i >= 0 && tabs[i].Cat != selected) Picked?.Invoke(tabs[i].Cat);
+        base.OnMouseClick(e);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        Glass.Back(g, this);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        if (rects.Count != tabs.Length) Arrange();
+        int sel = Array.FindIndex(tabs, t => t.Cat == selected);
+        if (sel >= 0)
+        {
+            double p = move.Value;
+            var to = rects[sel];
+            var r = p >= 1 ? to : new RectangleF(
+                (float)(from.X + (to.X - from.X) * p), (float)(from.Y + (to.Y - from.Y) * p),
+                (float)(from.Width + (to.Width - from.Width) * p), TabH);
+            Theme.Glow(g, Theme.Accent, r, 10, 3, 2f, (int)(50 * Appear));
+            using var path = Theme.Round(r, 10);
+            using var b = new LinearGradientBrush(r, Theme.Fade(this, Theme.AccentHi), Theme.Fade(this, Theme.Accent), 90f);
+            g.FillPath(b, path);
+        }
+        for (int i = 0; i < tabs.Length; i++)
+        {
+            var (cat, glyph, label) = tabs[i];
+            var r = rects[i];
+            bool on = i == sel;
+            if (!on)
+            {
+                double hv = i == hover ? hoverA.Value : 0;
+                Theme.Fill(g, Color.FromArgb((int)((16 + 16 * hv) * Appear), 255, 255, 255), r, 10);
+            }
+            var fg = Theme.Fade(this, on ? Color.White : i == hover ? Theme.Text : Color.FromArgb(185, 188, 202));
+            TextRenderer.DrawText(g, glyph, Theme.Icon, new Rectangle((int)r.X + 10, (int)r.Y, 22, TabH), fg,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            TextRenderer.DrawText(g, label, Theme.Semi, new Rectangle((int)r.X + 36, (int)r.Y, (int)r.Width - 40, TabH), fg,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+            int n = pending(cat);
+            if (n > 0)
+            {
+                string c = n > 99 ? "99+" : n.ToString();
+                int cw = Math.Max(18, TextRenderer.MeasureText(c, Theme.Small).Width + 8);
+                var pill = new RectangleF(r.Right - cw + 6, r.Y - 6, cw, 17);
+                Theme.Fill(g, on ? Color.White : Theme.Accent, pill, 8.5f);
+                TextRenderer.DrawText(g, c, Theme.Small, Rectangle.Round(pill), on ? Theme.Accent : Color.White,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+        }
     }
 }

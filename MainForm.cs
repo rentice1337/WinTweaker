@@ -12,49 +12,51 @@ public partial class MainForm : Form
     const string Diagnostics = "Диагностика";
     const string SettingsPage = "Настройки";
 
-    // Боковое меню: раздел → пункты (названия совпадают с Category в Catalog.cs)
-    static readonly (string Section, (string Cat, string Glyph)[] Items)[] Nav =
+    // Боковое меню: 6 крупных разделов (+ «Настройки» внизу), внутри — вкладки.
+    // Вкладка = категория (названия совпадают с Category в Catalog.cs), Label — подпись на вкладке.
+    static readonly (string Name, string Glyph, (string Cat, string Glyph, string Label)[] Tabs)[] Sections =
     {
-        ("", new[] { (Home, "\uE80F"), (Diagnostics, "\uE9D9"), (History, "\uE81C") }),
-        ("Система", new[]
+        (Home, "", new[] { (Home, "", Home) }),
+        ("Игры", "", new[] { (GamesHub, "", GamesHub), ("Игры", "", "Настройки для игр") }),
+        ("Система", "", new[]
         {
-            ("Конфиденциальность", "\uE72E"),
-            ("Интерфейс", "\uE771"),
-            ("Панель задач", "\uE7C4"),
-            ("Проводник", "\uE8B7"),
-            ("Контекстное меню", "\uE700"),
-            ("Производительность", "\uEC4A"),
-            ("Безопасность", "\uEA18"),
+            ("Конфиденциальность", "", "Конфиденциальность"),
+            ("Интерфейс", "", "Интерфейс"),
+            ("Панель задач", "", "Панель задач"),
+            ("Проводник", "", "Проводник"),
+            ("Контекстное меню", "", "Контекстное меню"),
+            ("Производительность", "", "Производительность"),
+            ("Безопасность", "", "Безопасность"),
+            ("Мышь и клавиатура", "", "Мышь и клавиатура"),
+            ("Звук и уведомления", "", "Звук и уведомления"),
+            ("Обновления", "", "Обновления"),
         }),
-        ("Устройства", new[]
+        ("Программы", "", new[]
         {
-            ("Мышь и клавиатура", "\uE962"),
-            ("Звук и уведомления", "\uE767"),
+            (Programs.Cat, "", "Установка"),
+            ("Приложения", "", "Приложения Windows"),
+            (StartupManager.Cat, "", "Автозагрузка"),
+            ("Службы", "", "Службы"),
         }),
-        ("Софт", new[]
-        {
-            (Programs.Cat, "\uE7B8"),
-            ("Приложения", "\uE71D"),
-            (StartupManager.Cat, "\uE7E8"),
-            ("Службы", "\uE912"),
-            ("Обновления", "\uE895"),
-            ("Обслуживание", "\uE90F"),
-        }),
-        ("Игры", new[]
-        {
-            (GamesHub, "\uE7FC"),
-            ("Игры", "\uE945"),
-        }),
-        ("Сеть", new[]
-        {
-            ("Сеть", "\uE968"),
-            ("Обход блокировок", "\uE774"),
-        }),
-        ("Программа", new[] { (SettingsPage, "\uE713") }),
+        ("Сеть", "", new[] { ("Сеть", "", "Сеть"), ("Обход блокировок", "", "Обход блокировок") }),
+        ("Инструменты", "", new[] { (Diagnostics, "", Diagnostics), ("Обслуживание", "", "Обслуживание"), (History, "", History) }),
+        (SettingsPage, "", new[] { (SettingsPage, "", SettingsPage) }),
     };
 
+    /// <summary>Все страницы (категории) с иконками — для палитры, пульта и сводки.</summary>
+    static IEnumerable<(string Cat, string Glyph)> AllPages => Sections.SelectMany(s => s.Tabs.Select(t => (t.Cat, t.Glyph)));
+
+    static (string Name, string Glyph, (string Cat, string Glyph, string Label)[] Tabs) SectionOf(string cat)
+    {
+        foreach (var s in Sections) if (s.Tabs.Any(t => t.Cat == cat)) return s;
+        return Sections[0];
+    }
+
+    /// <summary>Последняя открытая вкладка каждого раздела.</summary>
+    readonly Dictionary<string, string> lastTab = new();
+
     static string GlyphOf(string cat) =>
-        Nav.SelectMany(s => s.Items).FirstOrDefault(i => i.Cat == cat).Glyph ?? "";
+        AllPages.FirstOrDefault(i => i.Cat == cat).Glyph ?? "";
 
     readonly List<Tweak> tweaks = Catalog.All();
     readonly Dictionary<Tweak, bool> current = new();
@@ -62,6 +64,8 @@ public partial class MainForm : Form
     readonly Dictionary<Tweak, int> curVal = new();
     readonly Dictionary<Tweak, int> desVal = new();
     readonly List<NavItem> navItems = new();
+    NavItem? settingsItem;
+    TabStrip? tabStrip;
     readonly NavHost nav = new();
     readonly Viewport view = new();
     readonly UserBadge badge = new() { User = Environment.UserName };
@@ -249,25 +253,26 @@ public partial class MainForm : Form
         Drag(nav.Canvas);
 
         var nc = nav.Nav;
-        int y = 4;
-        foreach (var (section, items) in Nav)
+        int y = 6;
+        foreach (var sec in Sections)
         {
-            if (section != "")
+            string name = sec.Name;
+            var first = sec.Tabs[0].Cat;
+            var n = new NavItem(sec.Glyph, name) { Width = 214 };
+            n.SetSelectedNow(sec.Tabs.Any(t => t.Cat == selected));
+            n.Click += (_, _) => SelectCategory(lastTab.GetValueOrDefault(name) ?? first);
+            navItems.Add(n);
+            if (name == SettingsPage)
             {
-                nc.Labels.Add((section, y + 7));
-                y += 23;
+                // «Настройки» — внизу меню, над плашкой пользователя
+                settingsItem = n;
+                side.Controls.Add(n);
+                continue;
             }
-            foreach (var (cat, glyph) in items)
-            {
-                var n = new NavItem(glyph, cat) { Location = new Point(10, y), Width = 214 };
-                n.SetSelectedNow(cat == selected);
-                n.Click += (_, _) => SelectCategory(cat);
-                navItems.Add(n);
-                nc.Controls.Add(n);
-                if (cat == selected) nc.Ind.Set(y);
-                y += NavCanvas.Step;
-            }
-            y += 4;
+            n.Location = new Point(10, y);
+            nc.Controls.Add(n);
+            if (n.Selected) nc.Ind.Set(y);
+            y += NavCanvas.Step + 4;
         }
         int navHeight = y + 6;
 
@@ -281,7 +286,8 @@ public partial class MainForm : Form
         side.Resize += (_, _) =>
         {
             badge.SetBounds(0, side.Height - badge.Height, side.Width - 1, badge.Height);
-            nav.SetBounds(0, 76, side.Width - 1, Math.Max(80, side.Height - 76 - badge.Height));
+            settingsItem?.SetBounds(10, side.Height - badge.Height - NavCanvas.ItemH - 10, 214, NavCanvas.ItemH);
+            nav.SetBounds(0, 76, side.Width - 1, Math.Max(80, side.Height - 76 - badge.Height - NavCanvas.ItemH - 20));
             nav.SetContentHeight(navHeight);
         };
         return side;
@@ -368,11 +374,16 @@ public partial class MainForm : Form
     {
         if (cat == selected && focus == null && loaded) return;
         selected = cat;
+        var sec = SectionOf(cat);
+        lastTab[sec.Name] = cat;
         foreach (var n in navItems)
         {
-            n.Selected = n.Text == cat;
-            if (n.Text == cat) { nav.Nav.Ind.To(n.Top, 420); nav.Reveal(n); }
+            bool mine = n.Text == sec.Name;
+            n.Selected = mine;
+            if (mine && n.Parent == nav.Nav) { nav.Nav.Ind.To(n.Top, 420); nav.Reveal(n); }
         }
+        // индикатор меню уезжает, если выбраны «Настройки» внизу
+        if (sec.Name == SettingsPage) nav.Nav.Ind.To(-NavCanvas.ItemH * 2, 300);
         Build(focus);
     }
 
@@ -414,11 +425,32 @@ public partial class MainForm : Form
                 foreach (var card in MakeCards(items)) cv.Controls.Add(card);
                 break;
         }
+        AddTabs();
         cv.ResumeLayout();
         Relayout();
         RevealAll();
         if (focus != null) FocusRow(focus);
     }
+
+    /// <summary>Вкладки раздела над заголовком страницы (если в разделе больше одной вкладки).</summary>
+    void AddTabs()
+    {
+        tabStrip = null;
+        var sec = SectionOf(selected);
+        var cv = view.Canvas;
+        var tab = sec.Tabs.FirstOrDefault(t => t.Cat == selected);
+        if (cv.Controls.Count > 0 && cv.Controls[0] is Header h && tab.Label != null) h.Text = tab.Label;
+        if (sec.Tabs.Length < 2) return;
+        tabStrip = new TabStrip(sec.Name, sec.Tabs, selected, PendingIn);
+        tabStrip.Picked += c => SelectCategory(c);
+        cv.Controls.Add(tabStrip);
+        cv.Controls.SetChildIndex(tabStrip, 0);
+    }
+
+    /// <summary>Сколько изменений в категории ждут «Применить».</summary>
+    int PendingIn(string cat) => tweaks.Count(t => t.Category == cat &&
+        (t.IsToggle ? desired.GetValueOrDefault(t) != current.GetValueOrDefault(t)
+                    : t.IsValue && desVal.GetValueOrDefault(t) != curVal.GetValueOrDefault(t)));
 
     // каскадное появление: заголовок, затем карточки с шагом 40 мс (снимками — без перерисовки живых окон)
     void RevealAll()
@@ -520,7 +552,7 @@ public partial class MainForm : Form
 
         cv.Controls.Add(new LiveWidget());
 
-        var cats = Nav.SelectMany(s => s.Items).Select(i => i.Cat)
+        var cats = AllPages.Select(i => i.Cat)
             .Where(c => c is not (Home or History or Diagnostics or SettingsPage) && c != StartupManager.Cat && c != Programs.Cat)
             .Select(c =>
             {
@@ -910,7 +942,7 @@ public partial class MainForm : Form
         });
         Cmd("", "Тест скорости DNS", "Диагностика", () => SelectCategory(Diagnostics));
         Cmd("", "Перезапустить Проводник", "Обслуживание", () => _ = RunBusy("Перезапуск Проводника…", Catalog.RestartExplorer));
-        foreach (var (cat, glyph) in Nav.SelectMany(s => s.Items))
+        foreach (var (cat, glyph) in AllPages)
             list.Add(new PaletteItem { Glyph = glyph, Title = cat, Sub = "Перейти в раздел", Search = "раздел", Order = order++, Run = () => SelectCategory(cat) });
         for (int i = 0; i < Theme.Accents.Length; i++)
         {
@@ -1087,6 +1119,7 @@ public partial class MainForm : Form
         }
         else badge.SetStatus($"Изменений к применению: {n} — показать", Theme.Accent);
         applyBtn.Count = n;
+        tabStrip?.Invalidate();
     }
 
     async Task LoadStateAsync()

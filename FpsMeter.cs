@@ -23,7 +23,8 @@ static class FpsMeter
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)] delegate void RecordCallback(IntPtr record);
 
-    const string SessionName = "WinTweak-FPS";
+    const string BaseName = "WinTweak-FPS";
+    static string SessionName = BaseName;
     const int PropsSize = 120, NameBytes = 1024;
     static readonly Guid Dxgi = new("CA11C036-0102-4A2D-A6AD-F03CFED5D3C9");
     static readonly Guid D3D9 = new("783ACA0A-790E-4D7F-8451-AA850511C6B9");
@@ -106,7 +107,7 @@ static class FpsMeter
         {
             var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WinTweaker");
             Directory.CreateDirectory(dir);
-            File.AppendAllText(Path.Combine(dir, "fps.log"), $"{DateTime.Now:s} {what}: {code}\r\n");
+            File.AppendAllText(Path.Combine(dir, "fps.log"), $"{DateTime.Now:s} {what}: {code} (администратор: {(Elevation.IsAdmin ? "да" : "нет")})\r\n");
         }
         catch { }
     }
@@ -114,21 +115,30 @@ static class FpsMeter
     static void Run()
     {
         // сессия могла остаться от прошлого запуска (сбой) — останавливаем её
-        var p = Props();
-        try
+        uint r = 0;
+        // основное имя; если сессия-«призрак» с этим именем не даёт себя закрыть — запасное, уникальное
+        foreach (var name in new[] { BaseName, $"{BaseName}-{Environment.ProcessId}" })
         {
-            ControlTraceW(0, SessionName, p, 1);
-            Marshal.FreeHGlobal(p);
-            p = Props();
-            uint r = StartTraceW(out session, SessionName, p);
-            if (r != 0) { Fail("StartTrace", r); return; }
+            SessionName = name;
+            var p = Props();
+            try
+            {
+                ControlTraceW(0, SessionName, p, 1);
+                Marshal.FreeHGlobal(p);
+                p = Props();
+                r = StartTraceW(out session, SessionName, p);
+            }
+            finally { Marshal.FreeHGlobal(p); }
+            if (r == 0) break;
         }
-        finally { Marshal.FreeHGlobal(p); }
+        if (r != 0) { Fail("StartTrace", r); return; }
 
+        // как в PresentMon: ключевые слова Events (0x1) и Analytic (0x8000000000000000), уровень Information
+        const ulong keywords = 0x8000000000000001;
         var g1 = Dxgi;
         var g2 = D3D9;
-        uint e1 = EnableTraceEx2(session, ref g1, 1 /* ENABLE */, 5 /* VERBOSE */, ulong.MaxValue, 0, 0, IntPtr.Zero);
-        uint e2 = EnableTraceEx2(session, ref g2, 1, 5, ulong.MaxValue, 0, 0, IntPtr.Zero);
+        uint e1 = EnableTraceEx2(session, ref g1, 1 /* ENABLE */, 4 /* INFORMATION */, keywords, 0, 0, IntPtr.Zero);
+        uint e2 = EnableTraceEx2(session, ref g2, 1, 4, keywords, 0, 0, IntPtr.Zero);
         if (e1 != 0 && e2 != 0) { Fail("EnableTraceEx2", e1); Stop(); return; }
 
         // EVENT_TRACE_LOGFILEW (x64, 448 байт): LoggerName @8, ProcessTraceMode @28, EventRecordCallback @424
