@@ -32,6 +32,8 @@ abstract class LayeredForm : Form
     static extern IntPtr CreateDIBSection(IntPtr dc, ref BITMAPINFOHEADER bmi, uint usage, out IntPtr bits, IntPtr section, uint offset);
     [DllImport("user32.dll")]
     static extern bool UpdateLayeredWindow(IntPtr h, IntPtr dst, IntPtr pptDst, ref SIZE sz, IntPtr src, ref POINT srcPt, int key, ref BLEND blend, int flags);
+    [DllImport("user32.dll", EntryPoint = "UpdateLayeredWindow")]
+    static extern bool UpdateLayeredWindowAt(IntPtr h, IntPtr dst, ref POINT pptDst, ref SIZE sz, IntPtr src, ref POINT srcPt, int key, ref BLEND blend, int flags);
 
     IntPtr memDC, dib, oldBmp;
     Bitmap? surface;
@@ -59,7 +61,7 @@ abstract class LayeredForm : Form
         }
     }
 
-    void EnsureSurface()
+    void EnsureSurface(int Width, int Height)
     {
         if (surface != null && surface.Width == Width && surface.Height == Height) return;
         FreeSurface();
@@ -86,12 +88,19 @@ abstract class LayeredForm : Form
         }
     }
 
-    protected void Present()
+    protected void Present() => Present(null, Size);
+
+    /// <summary>
+    /// Нарисовать и показать. С <paramref name="at"/> положение и размер задаются тем же вызовом, что и картинка, —
+    /// атомарно и в координатах Windows, без пересчётов WinForms.
+    /// </summary>
+    protected void Present(Point? at, Size sz)
     {
-        if (!IsHandleCreated || IsDisposed) return;
+        if (!IsHandleCreated || IsDisposed || sz.Width <= 0 || sz.Height <= 0) return;
+        int Width = sz.Width, Height = sz.Height;
         try
         {
-            EnsureSurface();
+            EnsureSurface(Width, Height);
             var g = gfx!;
             g.CompositingMode = CompositingMode.SourceCopy;
             g.Clear(Color.Transparent);
@@ -103,7 +112,12 @@ abstract class LayeredForm : Form
             var size = new SIZE { W = Width, H = Height };
             var src = new POINT();
             var blend = new BLEND { Op = 0, Flags = 0, Alpha = Alpha, Format = 1 /* AC_SRC_ALPHA */ };
-            UpdateLayeredWindow(Handle, IntPtr.Zero, IntPtr.Zero, ref size, memDC, ref src, 0, ref blend, 2 /* ULW_ALPHA */);
+            if (at is Point p)
+            {
+                var dst = new POINT { X = p.X, Y = p.Y };
+                UpdateLayeredWindowAt(Handle, IntPtr.Zero, ref dst, ref size, memDC, ref src, 0, ref blend, 2 /* ULW_ALPHA */);
+            }
+            else UpdateLayeredWindow(Handle, IntPtr.Zero, IntPtr.Zero, ref size, memDC, ref src, 0, ref blend, 2 /* ULW_ALPHA */);
         }
         catch { }
     }

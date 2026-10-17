@@ -78,6 +78,23 @@ sealed class OverlayWindow : LayeredForm
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int index);
     [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int index, int value);
+    [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(POINT p, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool GetMonitorInfoW(IntPtr mon, ref MONITORINFOEX info);
+    delegate bool MonitorProc(IntPtr mon, IntPtr dc, IntPtr rect, IntPtr data);
+    [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorProc proc, IntPtr data);
+
+    [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct MONITORINFOEX
+    {
+        public int Size;
+        public RECT Monitor, Work;
+        public int Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Device;
+    }
 
     const int GWL_EXSTYLE = -20, WS_EX_TRANSPARENT = 0x20;
     const int M = 10; // поле под свечение вокруг подложки
@@ -101,7 +118,7 @@ sealed class OverlayWindow : LayeredForm
 
     public OverlayWindow()
     {
-        Size = new Size(300, 80);
+        Size = new Size(1, 1);
         timer.Tick += (_, _) => Frame();
     }
 
@@ -134,12 +151,85 @@ sealed class OverlayWindow : LayeredForm
         base.OnFormClosed(e);
     }
 
-    // ───── перемещение мышью ─────
-    // Тащим сами, без системного перетаскивания за «заголовок»: так Windows не прилепляет оверлей к краю,
-    // не разворачивает его на весь экран и не даёт увести за пределы монитора.
+    // ───── положение ─────
+    // Единственный источник правды — поля pos и sz. Окно получает их одним вызовом UpdateLayeredWindow вместе с картинкой.
+    // Положение окна обратно не читаем (никаких Location/Bounds/Screen из WinForms): из-за пересчётов масштаба экрана
+    // прочитанное значение может отличаться от записанного на пару пикселей, и окно ползло бы при каждом обновлении.
 
+    Point pos;
+    Size sz;
+    bool placed;
     Point grab;
     bool dragging;
+    IntPtr lastMon;
+
+    readonly record struct Mon(Rectangle Bounds, string Device);
+
+    static Mon Info(IntPtr h)
+    {
+        var mi = new MONITORINFOEX { Size = Marshal.SizeOf<MONITORINFOEX>() };
+        if (h == IntPtr.Zero || !GetMonitorInfoW(h, ref mi)) return Primary();
+        return new Mon(Rectangle.FromLTRB(mi.Monitor.Left, mi.Monitor.Top, mi.Monitor.Right, mi.Monitor.Bottom), mi.Device ?? "");
+    }
+
+    static Mon Primary()
+    {
+        var h = MonitorFromPoint(new POINT(), 1 /* PRIMARY */);
+        var mi = new MONITORINFOEX { Size = Marshal.SizeOf<MONITORINFOEX>() };
+        return GetMonitorInfoW(h, ref mi)
+            ? new Mon(Rectangle.FromLTRB(mi.Monitor.Left, mi.Monitor.Top, mi.Monitor.Right, mi.Monitor.Bottom), mi.Device ?? "")
+            : new Mon(new Rectangle(0, 0, 1920, 1080), "");
+    }
+
+    static Mon At(Point p) => Info(MonitorFromPoint(new POINT { X = p.X, Y = p.Y }, 2 /* NEAREST */));
+
+    static Mon? ByDevice(string device)
+    {
+        if (device == "") return null;
+        Mon? found = null;
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (h, _, _, _) =>
+        {
+            var m = Info(h);
+            if (string.Equals(m.Device, device, StringComparison.OrdinalIgnoreCase)) { found = m; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    /// <summary>
+    /// Монитор для оверлея. Своё место — тот монитор, где его поставили (если он подключён). Угол — монитор окна
+    /// на переднем плане (игры); если на переднем плане сам WinTweak — тот, где оверлей был, чтобы не прыгать.
+    /// </summary>
+    Mon TargetMonitor()
+    {
+        if (OverlaySettings.Corner == 4 && ByDevice(OverlaySettings.Monitor) is { } saved) return saved;
+        var fg = GetForegroundWindow();
+        GetWindowThreadProcessId(fg, out uint pid);
+        if (fg != IntPtr.Zero && pid != Environment.ProcessId) lastMon = MonitorFromWindow(fg, 2);
+        return lastMon != IntPtr.Zero ? Info(lastMon) : Primary();
+    }
+
+    /// <summary>Поставить прямоугольник оверлея целиком внутрь монитора.</summary>
+    Point Fit(Point p, Rectangle area) => new(
+        Math.Clamp(p.X, area.Left, Math.Max(area.Left, area.Right - sz.Width)),
+        Math.Clamp(p.Y, area.Top, Math.Max(area.Top, area.Bottom - sz.Height)));
+
+    Point Home(Rectangle b)
+    {
+        const int pad = 6;
+        int corner = OverlaySettings.Corner;
+        if (corner == 4)
+        {
+            var (fx, fy) = OverlaySettings.Place;
+            return new Point(b.Left + (int)Math.Round(fx * Math.Max(0, b.Width - sz.Width)),
+                             b.Top + (int)Math.Round(fy * Math.Max(0, b.Height - sz.Height)));
+        }
+        return new Point(corner is 0 or 2 ? b.Left + pad : b.Right - sz.Width - pad,
+                         corner is 0 or 1 ? b.Top + pad : b.Bottom - sz.Height - pad);
+    }
+
+    // ───── перемещение мышью ─────
+    // Тащим сами, без системного перетаскивания за «заголовок»: Windows не прилепляет и не разворачивает окно.
 
     public void SetEditing(bool value)
     {
@@ -173,8 +263,8 @@ sealed class OverlayWindow : LayeredForm
         base.OnMouseDown(e);
         if (!Editing || e.Button != MouseButtons.Left) return;
         if (e.Clicks >= 2) { Finish(); return; }
-        var c = Cursor.Position;
-        grab = new Point(c.X - Left, c.Y - Top);
+        GetCursorPos(out var c);
+        grab = new Point(c.X - pos.X, c.Y - pos.Y);
         dragging = true;
         Capture = true;
     }
@@ -183,9 +273,10 @@ sealed class OverlayWindow : LayeredForm
     {
         base.OnMouseMove(e);
         if (!dragging) return;
-        var c = Cursor.Position;
-        var area = Screen.FromPoint(c).Bounds;
-        MoveTo(Fit(new Point(c.X - grab.X, c.Y - grab.Y), area));
+        GetCursorPos(out var c);
+        var cur = new Point(c.X, c.Y);
+        pos = Fit(new Point(cur.X - grab.X, cur.Y - grab.Y), At(cur).Bounds);
+        Present(pos, sz);
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
@@ -206,78 +297,37 @@ sealed class OverlayWindow : LayeredForm
     public void Finish()
     {
         StopDrag();
-        SavePlace();
+        if (Editing) SavePlace();
         SetEditing(false);
-    }
-
-    /// <summary>Поставить окно так, чтобы оно целиком было на экране.</summary>
-    Point Fit(Point p, Rectangle area) => new(
-        Math.Clamp(p.X, area.Left, Math.Max(area.Left, area.Right - Width)),
-        Math.Clamp(p.Y, area.Top, Math.Max(area.Top, area.Bottom - Height)));
-
-    void MoveTo(Point p)
-    {
-        if (Location == p) return;
-        SetWindowPos(Handle, (IntPtr)(-1) /* TOPMOST */, p.X, p.Y, 0, 0, 0x0001 /* NOSIZE */ | 0x0010 /* NOACTIVATE */);
     }
 
     void SavePlace()
     {
-        var sc = Screen.FromRectangle(Bounds);
-        var b = sc.Bounds;
-        double fx = b.Width > Width ? (double)(Left - b.Left) / (b.Width - Width) : 0;
-        double fy = b.Height > Height ? (double)(Top - b.Top) / (b.Height - Height) : 0;
+        var mon = At(new Point(pos.X + sz.Width / 2, pos.Y + sz.Height / 2));
+        var b = mon.Bounds;
+        double fx = b.Width > sz.Width ? (double)(pos.X - b.Left) / (b.Width - sz.Width) : 0;
+        double fy = b.Height > sz.Height ? (double)(pos.Y - b.Top) / (b.Height - sz.Height) : 0;
         OverlaySettings.Place = (Math.Clamp(fx, 0, 1), Math.Clamp(fy, 0, 1));
-        OverlaySettings.Monitor = sc.DeviceName;
+        OverlaySettings.Monitor = mon.Device;
         OverlaySettings.Corner = 4;
-        placeScreen = sc;
+        Log($"сохранено: {pos} на {mon.Device} {b}, доли {fx:0.###}/{fy:0.###}");
     }
 
-    // ───── на каком мониторе ─────
+    // ───── журнал для разбора, если оверлей всё-таки окажется не там ─────
 
-    Screen? placeScreen, lastScreen;
+    static int logged;
+    Point lastLogged = new(int.MinValue, int.MinValue);
 
-    /// <summary>
-    /// Монитор для оверлея. Своё место — тот монитор, где его поставили. Угол — монитор игры (окна на переднем плане);
-    /// если на переднем плане сам WinTweak, оверлей остаётся где был и не прыгает между мониторами.
-    /// </summary>
-    Screen TargetScreen()
+    static void Log(string line)
     {
-        if (OverlaySettings.Corner == 4)
+        if (logged++ > 200) return;
+        try
         {
-            if (placeScreen == null)
-            {
-                string dev = OverlaySettings.Monitor;
-                placeScreen = Screen.AllScreens.FirstOrDefault(s => s.DeviceName == dev) ?? Screen.PrimaryScreen ?? Screen.AllScreens[0];
-            }
-            return placeScreen;
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WinTweaker");
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(Path.Combine(dir, "overlay.log"), $"{DateTime.Now:HH:mm:ss} {line}\r\n");
         }
-        var fg = GetForegroundWindow();
-        GetWindowThreadProcessId(fg, out uint pid);
-        if (fg != IntPtr.Zero && pid != Environment.ProcessId) lastScreen = Screen.FromHandle(fg);
-        return lastScreen ??= Screen.PrimaryScreen ?? Screen.AllScreens[0];
-    }
-
-    void Place(Rectangle b)
-    {
-        if (WindowState != FormWindowState.Normal) WindowState = FormWindowState.Normal;
-        const int pad = 6;
-        int corner = OverlaySettings.Corner;
-        Point p;
-        if (corner == 4)
-        {
-            var (fx, fy) = OverlaySettings.Place;
-            p = new Point(b.Left + (int)Math.Round(fx * Math.Max(0, b.Width - Width)), b.Top + (int)Math.Round(fy * Math.Max(0, b.Height - Height)));
-        }
-        else
-        {
-            p = new Point(corner is 0 or 2 ? b.Left + pad : b.Right - Width - pad,
-                          corner is 0 or 1 ? b.Top + pad : b.Bottom - Height - pad);
-        }
-        p = Fit(p, b);
-        // поверх всех — подтверждаем раз в 2 с (игры в оконном режиме любят перекрывать)
-        if (Location != p || tick % 20 == 0)
-            SetWindowPos(Handle, (IntPtr)(-1), p.X, p.Y, 0, 0, 0x0001 | 0x0010);
+        catch { }
     }
 
     // ───── данные кадра ─────
@@ -348,24 +398,37 @@ sealed class OverlayWindow : LayeredForm
         FpsMeter.Pid = TargetPid();
         model = Build();
 
-        var screen = TargetScreen();
+        var mon = Editing ? At(new Point(pos.X + sz.Width / 2, pos.Y + sz.Height / 2)) : TargetMonitor();
         if (tick % 50 == 1)
         {
-            try { targetHz = Displays.All().FirstOrDefault(d => d.Device == screen.DeviceName)?.Hz ?? 0; } catch { targetHz = 0; }
+            try { targetHz = Displays.All().FirstOrDefault(d => d.Device == mon.Device)?.Hz ?? 0; } catch { targetHz = 0; }
         }
 
-        // размер под содержимое
-        var size = Measure(model);
-        if (Math.Abs(size.Width - Width) > 2 || Math.Abs(size.Height - Height) > 2) Size = size;
+        // размер под содержимое; ширину не дёргаем на каждую цифру — растём сразу, сжимаемся только заметно
+        var want = Measure(model);
+        int w = sz.Width;
+        if (want.Width > w || want.Width < w - 24 || !placed) w = (want.Width + 3) / 4 * 4;
+        sz = new Size(w, want.Height);
 
         // тихий режим: еле видно, пока всё хорошо; ярко — при просадке или скачке
         double target = Editing || !quiet || model.Worst != Sev.Ok ? 255 : 95;
         alpha += (target - alpha) * (target > alpha ? 0.6 : 0.15);
         Alpha = (byte)Math.Clamp(alpha, 0, 255);
 
-        if (!Editing) Place(screen.Bounds);
-        else if (!dragging) MoveTo(Fit(Location, Screen.FromRectangle(Bounds).Bounds)); // вырос — не вылезаем за край
-        Present();
+        if (dragging) { } // положение задаёт мышь
+        else if (Editing) pos = Fit(pos, mon.Bounds); // вырос — не вылезаем за край
+        else pos = Fit(Home(mon.Bounds), mon.Bounds);
+        placed = true;
+
+        if (!Editing && (Math.Abs(pos.X - lastLogged.X) > 40 || Math.Abs(pos.Y - lastLogged.Y) > 40))
+        {
+            Log($"место {pos}, размер {sz}, монитор {mon.Device} {mon.Bounds}, угол {OverlaySettings.Corner}");
+            lastLogged = pos;
+        }
+
+        // поверх всех — подтверждаем раз в 2 с (игры в оконном режиме любят перекрывать)
+        if (tick % 20 == 1) SetWindowPos(Handle, (IntPtr)(-1), 0, 0, 0, 0, 0x0001 /* NOSIZE */ | 0x0002 /* NOMOVE */ | 0x0010 /* NOACTIVATE */);
+        Present(pos, sz);
     }
 
     // ───── элементы ─────
@@ -449,7 +512,7 @@ sealed class OverlayWindow : LayeredForm
     {
         var m = model ?? Build();
         g.TranslateTransform(M, M);
-        var rect = new RectangleF(0.5f, 0.5f, Width - M * 2 - 1, Height - M * 2 - 1);
+        var rect = new RectangleF(0.5f, 0.5f, sz.Width - M * 2 - 1, sz.Height - M * 2 - 1);
         if (Editing)
         {
             // полностью прозрачные пиксели пропускают мышь насквозь — даём, за что взяться
