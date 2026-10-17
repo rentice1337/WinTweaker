@@ -38,8 +38,12 @@ public partial class MainForm : Form
             (StartupManager.Cat, "\uE7E8"),
             ("Службы", "\uE912"),
             ("Обновления", "\uE895"),
-            ("Игры", "\uE7FC"),
             ("Обслуживание", "\uE90F"),
+        }),
+        ("Игры", new[]
+        {
+            (GamesHub, "\uE7FC"),
+            ("Игры", "\uE945"),
         }),
         ("Сеть", new[]
         {
@@ -122,11 +126,13 @@ public partial class MainForm : Form
         Sampler.Start();
         tray = new Tray(this);
         Widgets.Init();
+        InitGames();
         Load += (_, _) => Glass.Attach(this);
         Shown += async (_, _) =>
         {
             cursorTimer.Start();
             await LoadStateAsync();
+            if (!GameLibrary.Scanned) _ = GameLibrary.ScanAsync(); // для автоопределения игр
             if (AppSettings.Get("updates", "1") == "1") _ = CheckUpdates(manual: false);
         };
     }
@@ -208,6 +214,7 @@ public partial class MainForm : Form
     {
         if (exiting) return;
         exiting = true;
+        if (GameMode.Active) GameMode.Exit(GameMode.Reason ?? ""); // вернуть уведомления, питание, службы
         tray?.Dispose();
         tray = null;
         Widgets.CloseAll();
@@ -229,6 +236,7 @@ public partial class MainForm : Form
         if (!exiting)
         {
             exiting = true;
+            if (GameMode.Active) GameMode.Exit(GameMode.Reason ?? "");
             tray?.Dispose();
             Widgets.CloseAll();
         }
@@ -400,6 +408,7 @@ public partial class MainForm : Form
             case History: BuildHistory(); break;
             case Diagnostics: BuildDiagnostics(); break;
             case SettingsPage: BuildSettings(); break;
+            case GamesHub: BuildGames(); break;
             default:
                 var items = tweaks.Where(t => t.Category == selected).ToList();
                 cv.Controls.Add(new Header(selected, Subtitle(items)));

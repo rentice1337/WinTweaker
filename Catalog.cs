@@ -354,6 +354,73 @@ public static partial class Catalog
             (@"HKCU\Control Panel\Mouse", "MouseSpeed", "0", "1"),
             (@"HKCU\Control Panel\Mouse", "MouseThreshold1", "0", "6"),
             (@"HKCU\Control Panel\Mouse", "MouseThreshold2", "0", "10")));
+        GameNetwork(t);
+    }
+
+    // ───── Сеть для игр ─────
+    const string TcpIf = @"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces";
+
+    /// <summary>Интерфейсы TCP/IP, у которых есть адрес (по DHCP или вручную) — то есть реально используемые.</summary>
+    static List<string> ActiveInterfaces()
+    {
+        var list = new List<string>();
+        try
+        {
+            using var root = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(TcpIf[5..]);
+            if (root == null) return list;
+            foreach (var id in root.GetSubKeyNames())
+            {
+                using var k = root.OpenSubKey(id);
+                string dhcp = k?.GetValue("DhcpIPAddress")?.ToString() ?? "";
+                string ip = (k?.GetValue("IPAddress") as string[])?.FirstOrDefault() ?? "";
+                bool has(string a) => a != "" && a != "0.0.0.0";
+                if (has(dhcp) || has(ip)) list.Add(TcpIf + "\\" + id);
+            }
+        }
+        catch { }
+        return list;
+    }
+
+    static void GameNetwork(List<Tweak> t)
+    {
+        const string C = "Игры", G = "Сеть для игр";
+        t.Add(new Tweak
+        {
+            Category = C, Group = G, Name = "Не усыплять сетевую карту",
+            Description = "Windows не выключает сетевой адаптер для экономии энергии — меньше обрывов и скачков пинга после простоя. " +
+                          "Заодно выключается пробуждение по сети (Wake-on-LAN). При применении сеть переподключится на пару секунд.",
+            Details = "PowerShell (физические адаптеры):\n  Get-NetAdapter -Physical | Disable-NetAdapterPowerManagement\nОтменить:\n  Get-NetAdapter -Physical | Enable-NetAdapterPowerManagement",
+            IsApplied = () =>
+            {
+                var r = Shell.PS("$p = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Get-NetAdapterPowerManagement -ErrorAction SilentlyContinue; " +
+                                 "if (-not $p) { 'none' } elseif (@($p | Where-Object { $_.AllowComputerToTurnOffDevice -eq 'Enabled' }).Count -gt 0) { 'on' } else { 'off' }");
+                return r.Trim() == "off";
+            },
+            Apply = () => Shell.PS("Get-NetAdapter -Physical | Disable-NetAdapterPowerManagement -ErrorAction SilentlyContinue"),
+            Revert = () => Shell.PS("Get-NetAdapter -Physical | Enable-NetAdapterPowerManagement -ErrorAction SilentlyContinue")
+        });
+        t.Add(new Tweak
+        {
+            Category = C, Group = G, Name = "Отключить алгоритм Нейгла (TCP без задержки)",
+            NeedsRestart = true,
+            Description = "Мелкие TCP-пакеты уходят сразу, без накопления. Влияет только на TCP: часть MMO, старые онлайн-игры, лаунчеры и голосовые чаты. " +
+                          "Большинство современных шутеров работают по UDP — им это не поможет и не навредит.",
+            Details = "Для каждого сетевого интерфейса с IP-адресом:\n  [" + TcpIf + "\\{GUID}]\n    TcpAckFrequency = 1  (REG_DWORD)\n    TCPNoDelay = 1  (REG_DWORD)\n\n" +
+                      "Отменить: удалить оба параметра (поведение по умолчанию).",
+            IsApplied = () =>
+            {
+                var ifs = ActiveInterfaces();
+                return ifs.Count > 0 && ifs.All(k => Reg.Get(k, "TcpAckFrequency")?.ToString() == "1" && Reg.Get(k, "TCPNoDelay")?.ToString() == "1");
+            },
+            Apply = () =>
+            {
+                foreach (var k in ActiveInterfaces()) { Reg.Set(k, "TcpAckFrequency", 1); Reg.Set(k, "TCPNoDelay", 1); }
+            },
+            Revert = () =>
+            {
+                foreach (var k in ActiveInterfaces()) { Reg.Delete(k, "TcpAckFrequency"); Reg.Delete(k, "TCPNoDelay"); }
+            }
+        });
     }
 
     // ───────── Обслуживание (разовые действия) ─────────
