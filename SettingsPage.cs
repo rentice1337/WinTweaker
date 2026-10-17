@@ -50,8 +50,8 @@ public partial class MainForm
             () => AppSettings.Get("updates", "1") == "1", on => AppSettings.Set("updates", on ? "1" : "0"));
         cv.Controls.Add(apply);
 
-        // ── Трей и виджеты ──
-        var tray = new OptionsCard("Трей и виджеты");
+        // ── Трей ──
+        var tray = new OptionsCard("Трей");
         tray.Add("Закрывать в трей", "Крестик прячет окно в трей, выход — из панели значка в трее",
             () => AppSettings.Get("tray", "1") == "1", on => AppSettings.Set("tray", on ? "1" : "0"));
         tray.Add("Запуск вместе с Windows", "Сразу в трей, без окна и без запроса UAC (задание планировщика)",
@@ -60,17 +60,13 @@ public partial class MainForm
                 bool ok = await RunBusy(on ? "Включаю автозапуск…" : "Выключаю автозапуск…", on ? () => Autostart.Install() : () => Autostart.Uninstall());
                 autostartOn = ok ? on : !on;
             });
-        tray.Add("Виджеты на рабочем столе", "Общий выключатель; также в панели трея",
-            () => Widgets.Master, on => Widgets.Master = on);
-        foreach (var (key, name, desc, _) in Widgets.All)
-        {
-            string k = key;
-            tray.Add("   " + name, desc, () => Widgets.IsEnabled(k), on => Widgets.SetEnabled(k, on));
-        }
-        tray.Add("Компактные виджеты", "Уменьшенные версии всех виджетов; у каждого отдельно — правый клик → «Компактный вид»",
-            () => Widgets.AllCompact, on => Widgets.AllCompact = on);
-        tray.Add("Закрепить виджеты", "Нельзя случайно сдвинуть мышью (правый клик по виджету — то же)",
-            () => DesktopWidget.Locked, on => { DesktopWidget.Locked = on; AppSettings.Set("w.lock", on ? "1" : "0"); });
+        tray.Add("Пульт по Ctrl+Alt+W", "Круговой пульт у курсора из любой программы (и по клику на значок в трее)",
+            () => AppSettings.Get("hotkey", "1") == "1", on =>
+            {
+                AppSettings.Set("hotkey", on ? "1" : "0");
+                bool ok = this.tray?.SetHotkey(on) ?? true;
+                if (on && !ok) Toast.Pop(this, "Ctrl+Alt+W уже занято другой программой — пульт открывается кликом по значку", Tone.Warning);
+            });
         cv.Controls.Add(tray);
 
         // ── Свои наборы ──

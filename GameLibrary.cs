@@ -15,6 +15,8 @@ sealed class InstalledGame
     public int SteamId { get; init; }
     public GameInfo? Info { get; init; }
     public bool Custom { get; init; }
+    /// <summary>Идентификатор игры в Epic (для запуска через лаунчер).</summary>
+    public string? EpicApp { get; init; }
     public Image? Cover { get; set; }
     public Image? Icon { get; set; }
     /// <summary>Для exe включён высокий приоритет (признак «настроено» на плитке).</summary>
@@ -93,6 +95,7 @@ static class GameLibrary
 
         try { foreach (var g in Steam()) Add(g); } catch { }
         try { foreach (var g in Epic()) Add(g); } catch { }
+        try { foreach (var g in EaApp()) Add(g); } catch { }
         try { foreach (var g in Uninstallers()) Add(g); } catch { }
         try { foreach (var g in KnownFolders()) Add(g); } catch { }
         foreach (var exe in cache.Custom.Where(File.Exists))
@@ -196,6 +199,7 @@ static class GameLibrary
                 string name = r.TryGetProperty("DisplayName", out var n) ? n.GetString() ?? "" : "";
                 string loc = r.TryGetProperty("InstallLocation", out var l) ? l.GetString() ?? "" : "";
                 string exe = r.TryGetProperty("LaunchExecutable", out var e) ? e.GetString() ?? "" : "";
+                string app = r.TryGetProperty("AppName", out var an) ? an.GetString() ?? "" : "";
                 bool isGame = !r.TryGetProperty("AppCategories", out var cats) ||
                               cats.EnumerateArray().Any(c => c.GetString()?.Equals("games", StringComparison.OrdinalIgnoreCase) == true);
                 if (name != "" && Directory.Exists(loc) && isGame)
@@ -204,7 +208,7 @@ static class GameLibrary
                     var full = exe != "" ? Path.Combine(loc, exe) : null;
                     // у Fortnite запускается лаунчер — сам клиент найдём по имени из пресета
                     if (info != null || full == null || !File.Exists(full)) full = null;
-                    g = new InstalledGame { Name = name, Source = "Epic Games", Dir = loc, Exe = full, Info = info };
+                    g = new InstalledGame { Name = name, Source = "Epic Games", Dir = loc, Exe = full, Info = info, EpicApp = app == "" ? null : app };
                 }
             }
             catch { }
@@ -230,13 +234,126 @@ static class GameLibrary
             {
                 using var k = root.OpenSubKey(sub);
                 string name = k?.GetValue("DisplayName") as string ?? "";
-                string loc = (k?.GetValue("InstallLocation") as string ?? "").Trim('"');
-                var info = name == "" ? null : GameCatalog.Match(name);
-                if (info == null || loc == "" || !Directory.Exists(loc)) continue;
+                if (name == "" || Launchers.Any(l => name.Equals(l, StringComparison.OrdinalIgnoreCase))) continue;
                 string pub = k?.GetValue("Publisher") as string ?? "";
-                yield return new InstalledGame { Name = name, Source = SourceOf(pub, loc), Dir = loc, Info = info };
+                var info = GameCatalog.Match(name);
+                // игры без пресета — только от игровых издателей (иначе в список попадут все программы)
+                if (info == null && !GamePublishers.Any(p => pub.Contains(p, StringComparison.OrdinalIgnoreCase))) continue;
+                string loc = (k?.GetValue("InstallLocation") as string ?? "").Trim().Trim('"');
+                if (loc == "") loc = DirOf(k?.GetValue("DisplayIcon") as string) ?? DirOf(k?.GetValue("UninstallString") as string) ?? "";
+                if (loc == "" || !Directory.Exists(loc)) continue;
+                yield return new InstalledGame { Name = name, Source = SourceOf(pub, loc), Dir = loc.TrimEnd('\\'), Info = info };
             }
         }
+    }
+
+    static readonly string[] GamePublishers =
+    {
+        "Electronic Arts", "Respawn", "Riot Games", "Battlestate", "Blizzard", "Activision", "Ubisoft", "Lesta", "Wargaming", "Crytek", "Bungie",
+    };
+
+    static readonly string[] Launchers =
+    {
+        "EA app", "EA", "Origin", "EA Desktop", "Battle.net", "Riot Client", "Riot Vanguard", "Ubisoft Connect", "Uplay",
+        "Lesta Game Center", "Wargaming.net Game Center", "Game Center", "Battlestate Games Launcher", "BsgLauncher",
+    };
+
+    /// <summary>Папка из пути вида "C:\Games\X\game.exe",0 (DisplayIcon/UninstallString). Деинсталляторы EA лежат в __Installer — берём папку игры.</summary>
+    static string? DirOf(string? cmd)
+    {
+        if (string.IsNullOrWhiteSpace(cmd)) return null;
+        cmd = cmd.Trim();
+        string path = cmd.StartsWith('"') ? cmd[1..Math.Max(1, cmd.IndexOf('"', 1))] : cmd.Split(',')[0];
+        int exe = path.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+        if (exe > 0) path = path[..(exe + 4)];
+        try
+        {
+            var dir = Path.GetDirectoryName(path);
+            while (dir != null && (Path.GetFileName(dir).StartsWith("__Installer", StringComparison.OrdinalIgnoreCase)
+                                   || Path.GetFileName(dir).Equals("Cleanup", StringComparison.OrdinalIgnoreCase)
+                                   || Path.GetFileName(dir).Equals("EAInstaller", StringComparison.OrdinalIgnoreCase)))
+                dir = Path.GetDirectoryName(dir);
+            return dir;
+        }
+        catch { return null; }
+    }
+
+    // ───────── EA app ─────────
+
+    /// <summary>
+    /// Игры EA app: папки установки из настроек EA app (machine.ini / user_*.ini, параметр *.downloadinplacedir),
+    /// стандартная «Program Files\EA Games» и ключи реестра «Install Dir», которые пишут игры EA.
+    /// Игра EA узнаётся по папке __Installer (в ней installerdata.xml с названием).
+    /// </summary>
+    static IEnumerable<InstalledGame> EaApp()
+    {
+        var roots = new List<string>
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "EA Games"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "EA Games"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Origin Games"),
+        };
+        var cfgFiles = new List<string>();
+        var pd = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "EA Desktop");
+        if (Directory.Exists(pd)) cfgFiles.AddRange(Directory.EnumerateFiles(pd, "machine.*"));
+        var ud = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Electronic Arts", "EA Desktop");
+        if (Directory.Exists(ud)) cfgFiles.AddRange(Directory.EnumerateFiles(ud, "*.ini"));
+        foreach (var f in cfgFiles)
+        {
+            string[] lines;
+            try { lines = File.ReadAllLines(f); } catch { continue; }
+            foreach (var l in lines)
+            {
+                int eq = l.IndexOf('=');
+                if (eq < 0 || !l[..eq].Trim().EndsWith("downloadinplacedir", StringComparison.OrdinalIgnoreCase)) continue;
+                var dir = l[(eq + 1)..].Trim().Trim('"');
+                if (dir != "") roots.Add(dir);
+            }
+        }
+
+        var dirs = new List<string>();
+        foreach (var root in roots.Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists))
+        {
+            try { dirs.AddRange(Directory.EnumerateDirectories(root)); } catch { }
+        }
+        // ключи реестра, которые пишут игры EA/Origin: ...\EA Games\<Игра>\Install Dir
+        foreach (var basePath in new[] { @"SOFTWARE\WOW6432Node\EA Games", @"SOFTWARE\EA Games", @"SOFTWARE\WOW6432Node\Electronic Arts", @"SOFTWARE\Electronic Arts", @"SOFTWARE\Respawn" })
+        {
+            using var k = Registry.LocalMachine.OpenSubKey(basePath);
+            if (k == null) continue;
+            foreach (var sub in k.GetSubKeyNames())
+            {
+                if (sub.StartsWith("EA Desktop", StringComparison.OrdinalIgnoreCase) || sub.StartsWith("EA Core", StringComparison.OrdinalIgnoreCase)) continue;
+                using var gk = k.OpenSubKey(sub);
+                var d = (gk?.GetValue("Install Dir") ?? gk?.GetValue("InstallDir") ?? gk?.GetValue("Install Location")) as string;
+                if (!string.IsNullOrWhiteSpace(d)) dirs.Add(d.Trim().Trim('"').TrimEnd('\\'));
+            }
+        }
+
+        foreach (var dir in dirs.Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists))
+        {
+            string name = EaTitle(dir) ?? Path.GetFileName(dir);
+            if (name == "" || Launchers.Any(l => name.Equals(l, StringComparison.OrdinalIgnoreCase))) continue;
+            // папка без __Installer и без пресета — скорее всего не игра EA
+            var info = GameCatalog.Match(name) ?? GameCatalog.Match(Path.GetFileName(dir));
+            if (info == null && !Directory.Exists(Path.Combine(dir, "__Installer"))) continue;
+            yield return new InstalledGame { Name = info?.Name ?? name, Source = "EA app", Dir = dir, Info = info };
+        }
+    }
+
+    /// <summary>Название игры из __Installer\installerdata.xml (gameTitle en_US или первый).</summary>
+    static string? EaTitle(string dir)
+    {
+        try
+        {
+            var f = Path.Combine(dir, "__Installer", "installerdata.xml");
+            if (!File.Exists(f)) return null;
+            var xml = File.ReadAllText(f);
+            var m = Regex.Match(xml, "<gameTitle[^>]*locale=\"en_US\"[^>]*>([^<]+)</gameTitle>", RegexOptions.IgnoreCase);
+            if (!m.Success) m = Regex.Match(xml, "<gameTitle[^>]*>([^<]+)</gameTitle>", RegexOptions.IgnoreCase);
+            return m.Success ? System.Net.WebUtility.HtmlDecode(m.Groups[1].Value.Trim()) : null;
+        }
+        catch { return null; }
     }
 
     static string SourceOf(string publisher, string dir)
@@ -266,6 +383,70 @@ static class GameLibrary
         foreach (var (dir, id, src) in known)
             if (Directory.Exists(dir) && GameCatalog.ById(id) is { } info)
                 yield return new InstalledGame { Name = info.Name, Source = src, Dir = dir, Info = info };
+    }
+
+    // ───────── Запуск ─────────
+
+    /// <summary>
+    /// Запустить игру так, как её запускает лаунчер: Steam и Epic — по ссылке, Riot — через Riot Client,
+    /// остальные — exe (EA app и подобные перехватывают запуск сами). WinTweak работает от администратора,
+    /// а игра должна стартовать с обычными правами — поэтому запуск идёт через Проводник.
+    /// </summary>
+    public static void Launch(InstalledGame g)
+    {
+        if (g.Source == "Steam" && g.SteamId > 0) { Open($"steam://rungameid/{g.SteamId}"); return; }
+        if (g.EpicApp != null) { Open($"com.epicgames.launcher://apps/{Uri.EscapeDataString(g.EpicApp)}?action=launch&silent=true"); return; }
+        if (g.Info?.Id is "valorant" or "lol" && RiotClient() is string rc)
+        {
+            string product = g.Info.Id == "valorant" ? "valorant" : "league_of_legends";
+            OpenWithArgs(rc, $"--launch-product={product} --launch-patchline=live");
+            return;
+        }
+        if (g.Info?.Id == "tarkov" && BsgLauncher() is string bsg) { Open(bsg); return; }
+        if (g.Exe != null) Open(g.Exe);
+    }
+
+    static void Open(string target) =>
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{target}\"") { UseShellExecute = false });
+
+    /// <summary>exe с параметрами без прав администратора: временный ярлык, открытый через Проводник.</summary>
+    static void OpenWithArgs(string exe, string args)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "WinTweak");
+        Directory.CreateDirectory(dir);
+        var lnk = Path.Combine(dir, Path.GetFileNameWithoutExtension(exe) + "-" + Math.Abs(args.GetHashCode()) + ".lnk");
+        var type = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException("WScript.Shell недоступен");
+        dynamic shell = Activator.CreateInstance(type)!;
+        dynamic sc = shell.CreateShortcut(lnk);
+        sc.TargetPath = exe;
+        sc.Arguments = args;
+        sc.WorkingDirectory = Path.GetDirectoryName(exe);
+        sc.Save();
+        Open(lnk);
+    }
+
+    static string? RiotClient()
+    {
+        try
+        {
+            var f = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Riot Games", "RiotClientInstalls.json");
+            if (File.Exists(f))
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(f));
+                foreach (var key in new[] { "rc_default", "rc_live" })
+                    if (doc.RootElement.TryGetProperty(key, out var v) && v.GetString() is string p && File.Exists(p)) return p;
+            }
+        }
+        catch { }
+        var def = @"C:\Riot Games\Riot Client\RiotClientServices.exe";
+        return File.Exists(def) ? def : null;
+    }
+
+    static string? BsgLauncher()
+    {
+        foreach (var p in new[] { @"C:\Battlestate Games\BsgLauncher\BsgLauncher.exe", @"C:\Program Files\Battlestate Games\BsgLauncher\BsgLauncher.exe" })
+            if (File.Exists(p)) return p;
+        return null;
     }
 
     // ───────── Главный exe ─────────

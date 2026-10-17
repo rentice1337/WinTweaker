@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 namespace WinTweaker;
 
 /// <summary>
-/// Игровой режим «Не беспокоить»: на время игры — без уведомлений, без виджетов и анимаций WinTweak,
+/// Игровой режим «Не беспокоить»: на время игры — без уведомлений и анимаций WinTweak,
 /// без загрузки обновлений, со схемой «Высокая производительность», по желанию — без фоновых программ
 /// и без фонового поиска Wi-Fi сетей. После игры всё возвращается как было.
 /// Исходное состояние сохраняется в файл до изменений: если программа или ПК выключатся во время игры,
@@ -92,7 +92,6 @@ static class GameMode
                 RawSet(Push, "ToastEnabled", 0);
                 RawSet(Noc, "NOC_GLOBAL_SETTING_TOASTS_ENABLED", 0);
             }
-            if (Opt("widgets")) Widgets.Suspended = true;
             if (Opt("anim")) Motion.UserOff = true;
             if (s.Power != null && !s.Power.Equals(HP, StringComparison.OrdinalIgnoreCase) && !s.Power.Equals(Ultimate, StringComparison.OrdinalIgnoreCase))
             {
@@ -146,7 +145,6 @@ static class GameMode
             }
         }
         catch { }
-        Widgets.Suspended = false;
         Motion.UserOff = AppSettings.Get("anim", "1") == "0";
         try { if (!string.IsNullOrEmpty(s.Power)) Shell.Run("powercfg", $"/setactive {s.Power}"); } catch { }
         try { if (s.WuWasRunning) Shell.Run("net.exe", "start wuauserv"); } catch { }

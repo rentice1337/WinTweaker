@@ -1,12 +1,12 @@
 using System.Drawing.Drawing2D;
-using System.Drawing.Text;
 using System.Runtime.InteropServices;
 
 namespace WinTweaker;
 
 /// <summary>
-/// Значок в трее: в нём живой % занятой памяти (цвет — по нагрузке), подсказка с CPU/ОЗУ.
-/// Левый клик — стеклянная панель, двойной — открыть окно.
+/// Значок в трее: логотип WinTweak с точкой состояния (зелёная — всё в порядке, жёлтая — есть совет,
+/// красная — проблема, цвет акцента — идёт игровой режим). Левый клик и Ctrl+Alt+W — круговой пульт,
+/// правый клик — короткое меню.
 /// </summary>
 sealed class Tray : IDisposable
 {
@@ -14,79 +14,95 @@ sealed class Tray : IDisposable
 
     readonly NotifyIcon icon = new() { Text = "WinTweak", Visible = true };
     readonly MainForm main;
-    TrayPanel? panel;
+    readonly HotkeyWindow hotkey;
+    TrayWheel? wheel;
+    DateTime wheelClosed;
     IntPtr lastHandle;
-    int lastValue = -1;
-    Color lastAccent;
-    DateTime panelClosed;
+    Color lastDot, lastAccent;
+    int tick;
+
+    public static Hints.Hint Current { get; private set; } = Hints.Fallback;
+    public bool HotkeyOk => hotkey.Ok;
 
     public Tray(MainForm main)
     {
         this.main = main;
-        icon.MouseClick += (_, e) =>
-        {
-            if (e.Button == MouseButtons.Left) TogglePanel();
-            if (e.Button == MouseButtons.Right) TogglePanel();
-        };
-        icon.MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) main.ShowFromTray(); };
+        icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ToggleWheel(Cursor.Position); };
+
+        var menu = new ContextMenuStrip { Renderer = new DarkRenderer(), Font = Theme.Body };
+        menu.Items.Add("Открыть WinTweak", null, (_, _) => main.ShowFromTray());
+        menu.Items.Add("Пульт   (Ctrl+Alt+W)", null, (_, _) => ToggleWheel(Cursor.Position));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Выход", null, (_, _) => main.ExitApp());
+        icon.ContextMenuStrip = menu;
+
+        hotkey = new HotkeyWindow(() => ToggleWheel(Cursor.Position));
+        SetHotkey(AppSettings.Get("hotkey", "1") == "1");
+
         Sampler.Updated += Update;
+        GameMode.Changed += Refresh;
         Update();
     }
 
+    /// <summary>Включить/выключить глобальную горячую клавишу Ctrl+Alt+W. Возвращает, удалось ли её занять.</summary>
+    public bool SetHotkey(bool on) => on ? hotkey.Register() : hotkey.Unregister();
+
     public void Balloon(string title, string text) => icon.ShowBalloonTip(4000, title, text, ToolTipIcon.Info);
 
-    void TogglePanel()
+    public void ToggleWheel(Point at)
     {
-        if (panel is { IsDisposed: false, Visible: true }) { panel.CloseAnimated(); return; }
-        // клик по значку при открытой панели сначала закрывает её (Deactivate) — не открываем заново сразу же
-        if ((DateTime.Now - panelClosed).TotalMilliseconds < 250) return;
-        panel = new TrayPanel(main);
-        panel.FormClosed += (_, _) => panelClosed = DateTime.Now;
-        panel.Show();
-        panel.Activate();
+        if (wheel is { IsDisposed: false }) { wheel.CloseAnimated(); return; }
+        // клик по значку при открытом пульте сначала закрывает его (потеря фокуса) — не открываем заново
+        if ((DateTime.Now - wheelClosed).TotalMilliseconds < 250) return;
+        wheel = new TrayWheel(main, at);
+        wheel.FormClosed += (_, _) => { wheelClosed = DateTime.Now; wheel = null; Refresh(); };
+        wheel.Show();
+        wheel.Activate();
+    }
+
+    void Refresh()
+    {
+        tick = 0;
+        Update();
     }
 
     void Update()
     {
-        int v = (int)Math.Round(Sampler.Ram);
-        icon.Text = $"WinTweak — ОЗУ {v}% · CPU {Sampler.Cpu:0}%";
-        if (v == lastValue && lastAccent == Theme.Accent) return;
-        lastValue = v;
+        var s = Sampler.Current;
+        string ping = s.PingMs is int p ? $" · пинг {p} мс" : "";
+        string mode = GameMode.Active ? "\nИгровой режим: " + GameMode.Reason : "";
+        var text = $"WinTweak — ОЗУ {s.Ram:0}% · CPU {s.Cpu:0}%{ping}{mode}";
+        icon.Text = text.Length > 127 ? text[..127] : text;
+
+        // подсказка и цвет точки — раз в 5 секунд (и сразу после событий)
+        if (tick++ % 5 == 0)
+        {
+            try { Current = Hints.Compute(main); } catch { Current = Hints.Fallback; }
+        }
+        var dot = GameMode.Active ? Theme.Accent : Hints.Tint(Current.Level);
+        if (dot == lastDot && lastAccent == Theme.Accent && lastHandle != IntPtr.Zero) return;
+        lastDot = dot;
         lastAccent = Theme.Accent;
-        var h = Draw(v);
+        var h = Draw(dot);
         icon.Icon = Icon.FromHandle(h);
         if (lastHandle != IntPtr.Zero) DestroyIcon(lastHandle);
         lastHandle = h;
     }
 
-    /// <summary>Плитка цвета нагрузки с числом: до 70% — акцент, до 85% — жёлтый, выше — красный.</summary>
-    static IntPtr Draw(int value)
+    /// <summary>Плитка логотипа и точка состояния в правом нижнем углу (с тёмной обводкой, чтобы читалась на любой панели).</summary>
+    static IntPtr Draw(Color dot)
     {
         int s = Math.Max(16, SystemInformation.SmallIconSize.Width);
         using var bmp = new Bitmap(s, s);
         using (var g = Graphics.FromImage(bmp))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
             g.Clear(Color.Transparent);
-            var col = value >= 85 ? Theme.Bad : value >= 70 ? Theme.Warn : Theme.Accent;
-            var r = new RectangleF(0, 0, s - 0.5f, s - 0.5f);
-            using (var path = Theme.Round(r, s * 0.24f))
-            using (var b = new LinearGradientBrush(r, Theme.Lerp(col, Color.White, 0.15), Theme.Lerp(col, Color.Black, 0.2), 90f))
-                g.FillPath(b, path);
-            // уровень «налит» снизу светлой полосой
-            float lvl = s * Math.Clamp(value, 0, 100) / 100f;
-            using (var clip = Theme.Round(r, s * 0.24f))
-            {
-                g.SetClip(clip);
-                using var fill = new SolidBrush(Color.FromArgb(55, 255, 255, 255));
-                g.FillRectangle(fill, 0, s - lvl, s, lvl);
-                g.ResetClip();
-            }
-            string text = value >= 100 ? "99" : value.ToString();
-            using var font = new Font("Segoe UI", s * (text.Length > 1 ? 0.5f : 0.6f), FontStyle.Bold, GraphicsUnit.Pixel);
-            using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            g.DrawString(text, font, Brushes.White, new RectangleF(0, 0.5f, s, s), sf);
+            Logo.Tile(g, new RectangleF(0, 0, s * 0.86f, s * 0.86f));
+            float d = s * 0.46f;
+            var r = new RectangleF(s - d - 0.5f, s - d - 0.5f, d, d);
+            using (var ring = new SolidBrush(Color.FromArgb(255, 12, 13, 18))) g.FillEllipse(ring, RectangleF.Inflate(r, s * 0.07f, s * 0.07f));
+            using (var b = new SolidBrush(dot)) g.FillEllipse(b, r);
         }
         return bmp.GetHicon();
     }
@@ -94,114 +110,113 @@ sealed class Tray : IDisposable
     public void Dispose()
     {
         Sampler.Updated -= Update;
-        panel?.Close();
+        GameMode.Changed -= Refresh;
+        wheel?.Close();
+        hotkey.Unregister();
+        hotkey.DestroyHandle();
         icon.Visible = false;
         icon.Dispose();
         if (lastHandle != IntPtr.Zero) DestroyIcon(lastHandle);
     }
 }
 
-/// <summary>Стеклянная панель над треем: живые CPU/ОЗУ/сеть, виджеты, «Открыть» и «Выход».</summary>
-sealed class TrayPanel : RoundForm
+/// <summary>Невидимое окно для глобальной горячей клавиши Ctrl+Alt+W.</summary>
+sealed class HotkeyWindow : NativeWindow
 {
-    readonly MainForm main;
-    readonly Toggle widgets = new();
-    readonly FlatBtn open = new("", "Открыть");
-    readonly FlatBtn exit = new("", "Выход") { Danger = true };
-    bool closing;
-    int baseTop;
-    const int W = 320, H = 300;
+    [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
+    [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
+    const int Id = 0x5754;
+    readonly Action pressed;
+    public bool Ok { get; private set; }
 
-    public TrayPanel(MainForm main)
+    public HotkeyWindow(Action pressed)
     {
-        this.main = main;
-        StartPosition = FormStartPosition.Manual;
-        TopMost = true;
-        Opacity = 0;
-        Size = new Size(W, H);
-        var area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1040);
-        Location = new Point(area.Right - W - 12, area.Bottom - H - 12);
-
-        widgets.Checked = Widgets.Master;
-        widgets.Location = new Point(W - widgets.Width - 18, 196);
-        widgets.CheckedChanged += (_, _) => Widgets.Master = widgets.Checked;
-        Controls.Add(widgets);
-
-        open.Location = new Point(16, H - 50);
-        open.Click += (_, _) => { CloseAnimated(); main.ShowFromTray(); };
-        Controls.Add(open);
-        exit.Location = new Point(W - exit.Width - 16, H - 50);
-        exit.Click += (_, _) => main.ExitApp();
-        Controls.Add(exit);
-
-        Deactivate += (_, _) => CloseAnimated();
-        KeyPreview = true;
-        KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) CloseAnimated(); };
-        Sampler.Updated += Repaint;
-        FormClosed += (_, _) => Sampler.Updated -= Repaint;
+        this.pressed = pressed;
+        CreateHandle(new CreateParams());
     }
 
-    void Repaint() { if (!IsDisposed) Invalidate(false); }
-
-    protected override void OnShown(EventArgs e)
+    public bool Register()
     {
-        base.OnShown(e);
-        baseTop = Top;
-        Motion.Run(220, p => { if (!IsDisposed) { Opacity = p; Top = baseTop + (int)Math.Round(14 * (1 - p)); } });
+        if (Ok) return true;
+        // MOD_ALT | MOD_CONTROL | MOD_NOREPEAT
+        Ok = RegisterHotKey(Handle, Id, 0x0001 | 0x0002 | 0x4000, (uint)Keys.W);
+        return Ok;
     }
 
-    public void CloseAnimated()
+    public bool Unregister()
     {
-        if (closing || IsDisposed) return;
-        closing = true;
-        Motion.Run(130, p => { if (!IsDisposed) Opacity = 1 - p; }, Motion.InOut, 0, () => { if (!IsDisposed) Close(); });
+        if (Ok) UnregisterHotKey(Handle, Id);
+        Ok = false;
+        return true;
     }
 
-    protected override void OnPaint(PaintEventArgs e)
+    protected override void WndProc(ref Message m)
     {
-        var g = e.Graphics;
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        Logo.Tile(g, new RectangleF(18, 18, 30, 30));
-        TextRenderer.DrawText(g, "WinTweak", Theme.F(11.5f, FontStyle.Bold), new Point(56, 16), Theme.Text);
-        TextRenderer.DrawText(g, $"работает {SysInfo.Uptime()}", Theme.Tiny, new Point(57, 36), Theme.Muted);
+        if (m.Msg == 0x0312 /* WM_HOTKEY */ && (int)m.WParam == Id) pressed();
+        base.WndProc(ref m);
+    }
+}
 
-        Meter(g, 18, 66, "Процессор", Sampler.Cpu, $"{Sampler.Cpu:0}%", Sampler.CpuHist, Theme.Accent);
-        Meter(g, 18, 118, "Память", Sampler.Ram, $"{Sampler.Ram:0}% · {Sampler.RamUsedGb:0.0} ГБ", Sampler.RamHist, Color.FromArgb(120, 170, 255));
+/// <summary>Одна главная подсказка «прямо сейчас» — по текущему состоянию ПК.</summary>
+static class Hints
+{
+    public sealed record Hint(string Text, Readiness.Level Level, string Glyph, Action<MainForm>? Act = null);
 
-        TextRenderer.DrawText(g, $"↓ {Sampler.Speed(Sampler.DownBps)}   ↑ {Sampler.Speed(Sampler.UpBps)}", Theme.Tiny, new Point(20, 168), Theme.Muted);
-        if (Sampler.PingMs is int p)
+    public static readonly Hint Fallback = new("Всё в порядке", Readiness.Level.Good, "");
+
+    static List<MatchReport>? matches;
+    static DateTime matchesAt;
+
+    public static Color Tint(Readiness.Level l) => l switch
+    {
+        Readiness.Level.Bad => Theme.Bad,
+        Readiness.Level.Warn => Theme.Warn,
+        Readiness.Level.Info => System.Drawing.Color.FromArgb(120, 170, 255),
+        _ => Theme.Good
+    };
+
+    public static Hint Compute(MainForm main)
+    {
+        var s = Sampler.Current;
+        if (GameWatcher.Current is { } run)
         {
-            var s = $"пинг {p} мс";
-            var w = TextRenderer.MeasureText(s, Theme.Tiny).Width;
-            TextRenderer.DrawText(g, s, Theme.Tiny, new Point(W - 20 - w, 168), p < 40 ? Theme.Good : p < 100 ? Theme.Warn : Theme.Bad);
+            string ping = GameMode.Monitor?.Last is int p ? $" · пинг {p} мс" : "";
+            return new($"{run.Name} · {GameUI.Duration(DateTime.Now - run.Since)}{ping}", Readiness.Level.Info, "",
+                m => m.OpenPage(MainForm.GamesPageName));
         }
+        if (main.RevertedCount is int rv and > 0)
+            return new($"Windows откатила {rv} {WatchBanner.Plural(rv)} — вернуть", Readiness.Level.Bad, "", m => m.FixRevertedFromTray());
+        if (main.PendingCount is int pc and > 0)
+            return new($"Изменений ждут «Применить»: {pc}", Readiness.Level.Warn, "", m => m.ReviewPending());
 
-        using (var pen = new Pen(Theme.Line)) g.DrawLine(pen, 16, 188, W - 16, 188);
-        TextRenderer.DrawText(g, "Виджеты на рабочем столе", Theme.Semi, new Point(18, 198), Theme.Text);
-        TextRenderer.DrawText(g, "Какие именно — в «Настройках»", Theme.Tiny, new Point(19, 218), Theme.Muted);
-        using (var pen = new Pen(Theme.Line)) g.DrawLine(pen, 16, H - 62, W - 16, H - 62);
-    }
-
-    void Meter(Graphics g, int x, int y, string label, double v, string text, double[] hist, Color c)
-    {
-        TextRenderer.DrawText(g, label, Theme.Tiny, new Point(x, y), Theme.Muted);
-        var tw = TextRenderer.MeasureText(text, Theme.Semi).Width;
-        TextRenderer.DrawText(g, text, Theme.Semi, new Point(W - 18 - tw, y - 3), Theme.Text);
-        var area = new RectangleF(x, y + 18, W - x * 2, 26);
-        var pts = hist.ToArray();
-        if (pts.Length < 2) return;
-        float step = area.Width / (Sampler.History - 1), x0 = area.Right - (pts.Length - 1) * step;
-        var line = pts.Select((val, i) => new PointF(x0 + i * step, area.Bottom - (float)(Math.Max(4, val) / 100 * area.Height))).ToArray();
-        using (var path = new GraphicsPath())
+        double down = s.DownHist.TakeLast(5).DefaultIfEmpty(0).Average();
+        if (down > 1024 * 1024)
+            return new($"Что-то качает {Sampler.Speed(down)} — перед игрой лучше закрыть", Readiness.Level.Warn, "",
+                m => m.OpenPage(MainForm.GamesPageName));
+        if (s.Ram >= 85)
         {
-            path.AddLines(line);
-            path.AddLine(line[^1], new PointF(line[^1].X, area.Bottom));
-            path.AddLine(new PointF(line[^1].X, area.Bottom), new PointF(line[0].X, area.Bottom));
-            using var fill = new LinearGradientBrush(new RectangleF(area.X, area.Y - 1, area.Width, area.Height + 2), Color.FromArgb(80, c), Color.FromArgb(0, c), 90f);
-            g.FillPath(fill, path);
+            var top = s.Top.FirstOrDefault();
+            string who = top.Name != null ? $" — больше всех {top.Name} ({GameUI.Bytes(top.Bytes)})" : "";
+            return new($"Память занята на {s.Ram:0}%{who}", Readiness.Level.Warn, "", m => m.OpenPage(MainForm.GamesPageName));
         }
-        using var pen = new Pen(c, 1.6f) { LineJoin = LineJoin.Round };
-        g.DrawLines(pen, line);
+        double cpu = s.CpuHist.TakeLast(5).DefaultIfEmpty(0).Average();
+        if (cpu > 50)
+            return new($"Процессор занят на {cpu:0}% — что-то работает в фоне", Readiness.Level.Warn, "",
+                _ => { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr.exe") { UseShellExecute = true }); } catch { } });
+        if (Reg.KeyExists(@"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"))
+            return new("Обновление Windows ждёт перезагрузки", Readiness.Level.Warn, "");
+        if (SysInfo.UptimeDays > 7)
+            return new($"ПК не перезагружался {SysInfo.UptimeDays:0} дн.", Readiness.Level.Info, "");
+
+        if (matches == null || (DateTime.Now - matchesAt).TotalSeconds > 30) { matches = Matches.Load(); matchesAt = DateTime.Now; }
+        var last = matches.FirstOrDefault();
+        if (last != null && (DateTime.Now - last.End).TotalHours < 12)
+        {
+            var (_, tone) = last.Verdict();
+            return new($"{last.Game}: {last.Avg:0} мс ±{last.Jitter:0}" + (tone == Tone.Success ? " — стабильно" : " — были скачки"),
+                tone == Tone.Success ? Readiness.Level.Good : Readiness.Level.Warn, "", m => m.OpenReport(last));
+        }
+        return new($"Всё в порядке · работает {SysInfo.Uptime()}", Readiness.Level.Good, "");
     }
 }
 

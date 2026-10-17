@@ -195,7 +195,11 @@ static class Glass
             if (p is SidePanel) { Overlay(g, c, SideTint); break; }
         }
         var surface = Ancestor<Surface>(c);
-        if (surface != null) Overlay(g, c, Scale(CardTint, surface.Appear));
+        if (surface != null)
+        {
+            Overlay(g, c, Scale(CardTint, surface.Appear));
+            surface.PaintGlowUnder(g, c);
+        }
         var row = Ancestor<TweakRow>(c);
         if (row != null) Overlay(g, c, row.Overlay);
     }
@@ -310,7 +314,8 @@ static class Spotlight
             bool near = r.Contains(screen);
             if (near || lit.Contains(s))
             {
-                s.Invalidate(false); // только рамка карточки; строки внутри не перерисовываются
+                // карточки с кнопками перерисовываются целиком (блик есть и под кнопками), списки — только рамка
+                s.Invalidate(s.LightsChildren);
                 if (near) lit.Add(s); else lit.Remove(s);
             }
         }
@@ -466,10 +471,15 @@ class Viewport : Control, IWheelTarget
         SetStyle(Theme.Smooth, true);
         Canvas = canvas;
         Controls.Add(Canvas);
-        pos = new AnimFloat(0, () => Canvas.Top = -(int)Math.Round(pos!.Value));
+        pos = new AnimFloat(0, () => { Canvas.Top = -(int)Math.Round(pos!.Value); OnScrolled(); });
     }
 
     int Max => Math.Max(0, contentHeight - Height);
+    public bool AtStart => target <= 0.5;
+    public bool AtEnd => target >= Max - 0.5;
+
+    /// <summary>После каждого шага прокрутки.</summary>
+    protected virtual void OnScrolled() { }
     public bool CanScroll => Max > 0;
     public int Offset => (int)Math.Round(target);
 

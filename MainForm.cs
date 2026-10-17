@@ -125,7 +125,6 @@ public partial class MainForm : Form
 
         Sampler.Start();
         tray = new Tray(this);
-        Widgets.Init();
         InitGames();
         Load += (_, _) => Glass.Attach(this);
         Shown += async (_, _) =>
@@ -196,7 +195,7 @@ public partial class MainForm : Form
         {
             trayHintShown = true;
             AppSettings.Set("trayHint", "1");
-            tray?.Balloon("WinTweak работает в трее", "Значок с процентом памяти — здесь. Выход — в панели по клику на значок.");
+            tray?.Balloon("WinTweak работает в трее", "Клик по значку или Ctrl+Alt+W — круговой пульт. Выход — правый клик по значку.");
         }
     }
 
@@ -217,7 +216,6 @@ public partial class MainForm : Form
         if (GameMode.Active) GameMode.Exit(GameMode.Reason ?? ""); // вернуть уведомления, питание, службы
         tray?.Dispose();
         tray = null;
-        Widgets.CloseAll();
         if (!Visible) { Close(); Application.Exit(); return; }
         if (closing) return;
         closing = true;
@@ -238,7 +236,6 @@ public partial class MainForm : Form
             exiting = true;
             if (GameMode.Active) GameMode.Exit(GameMode.Reason ?? "");
             tray?.Dispose();
-            Widgets.CloseAll();
         }
         base.OnFormClosing(e);
     }
@@ -258,7 +255,7 @@ public partial class MainForm : Form
             if (section != "")
             {
                 nc.Labels.Add((section, y + 7));
-                y += 25;
+                y += 23;
             }
             foreach (var (cat, glyph) in items)
             {
@@ -270,7 +267,7 @@ public partial class MainForm : Form
                 if (cat == selected) nc.Ind.Set(y);
                 y += NavCanvas.Step;
             }
-            y += 6;
+            y += 4;
         }
         int navHeight = y + 6;
 
@@ -280,8 +277,10 @@ public partial class MainForm : Form
         badge.Height = 62;
         side.Controls.Add(nav);
         side.Controls.Add(badge);
+        badge.Dock = DockStyle.None; // не перекрывать правую линию боковой панели
         side.Resize += (_, _) =>
         {
+            badge.SetBounds(0, side.Height - badge.Height, side.Width - 1, badge.Height);
             nav.SetBounds(0, 76, side.Width - 1, Math.Max(80, side.Height - 76 - badge.Height));
             nav.SetContentHeight(navHeight);
         };
@@ -372,7 +371,7 @@ public partial class MainForm : Form
         foreach (var n in navItems)
         {
             n.Selected = n.Text == cat;
-            if (n.Text == cat) nav.Nav.Ind.To(n.Top, 420);
+            if (n.Text == cat) { nav.Nav.Ind.To(n.Top, 420); nav.Reveal(n); }
         }
         Build(focus);
     }
@@ -666,7 +665,7 @@ public partial class MainForm : Form
             var res = await Task.Run(() => DnsBench.RunAsync((d, t) => BeginInvoke(() => { if (!w.IsDisposed) w.Progress(d, t); })));
             dnsCache = res;
             dnsCurrent = System.Text.RegularExpressions.Regex.Match(DnsCache.Current, @"\b(\d{1,3}\.){3}\d{1,3}\b").Value;
-            if (!w.IsDisposed) w.SetData(res, dnsCurrent);
+            if (!w.IsDisposed) { w.SetData(res, dnsCurrent); Relayout(); }
         }
         catch (Exception ex)
         {

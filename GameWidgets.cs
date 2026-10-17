@@ -110,10 +110,10 @@ class ModeBanner : Widget
         {
             var parts = new List<string> { "идёт " + GameUI.Duration(DateTime.Now - GameMode.Since) };
             if (GameMode.Monitor is { } m) parts.Add(m.Last is int p ? $"пинг {p} мс" : "пинг —");
-            parts.Add("уведомления и обновления на паузе");
+            parts.Add("без уведомлений");
             sub = string.Join(" · ", parts);
         }
-        else sub = Auto.Checked ? "Включится сам, когда запустится игра, и выключится после неё" : "Автовключение выключено — переключатель справа";
+        else sub = Auto.Checked ? "Сам включится при запуске игры" : "Автовключение выключено";
         TextRenderer.DrawText(g, sub, Theme.Body, new Rectangle(x, r.Top + 52, w, 22), C(Theme.Muted), flags);
 
         TextRenderer.DrawText(g, "Сам при запуске игры", Theme.Semi, new Rectangle(Auto.Right + 8, r.Top, 190, r.Height), C(Theme.Text),
