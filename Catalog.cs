@@ -8,7 +8,7 @@ namespace WinTweaker;
 /// R — один параметр реестра, MX — несколько, S — службы, A — UWP-приложение, Act — разовое действие.
 /// off = null → параметр удаляется (возврат к поведению по умолчанию).
 /// </summary>
-public static class Catalog
+public static partial class Catalog
 {
     const string Adv = @"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
     const string ExpU = @"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer";
@@ -39,6 +39,7 @@ public static class Catalog
         Maintenance(t);
         Network(t);
         t.AddRange(RussiaNetwork.All());
+        More(t);
         return t;
     }
 
@@ -99,7 +100,6 @@ public static class Catalog
         t.Add(R(C, "Тёмная тема приложений", "", Pers, "AppsUseLightTheme", 0, 1));
         t.Add(R(C, "Тёмная тема Windows (панель задач, Пуск)", "", Pers, "SystemUsesLightTheme", 0, 1));
         t.Add(R(C, "Отключить прозрачность", "Немного снижает нагрузку на видеокарту.", Pers, "EnableTransparency", 0, 1));
-        t.Add(R(C, "Скрыть поле поиска на панели задач", "Поиск по-прежнему открывается клавишей Win.", Search, "SearchboxTaskbarMode", 0, 1));
         t.Add(R(C, "Скрыть кнопку «Представление задач»", "Win+Tab продолжит работать.", Adv, "ShowTaskViewButton", 0, 1));
         t.Add(R(C, "Отключить «Новости и интересы»",
             "Виджет погоды и новостей на панели задач. Через политику — Windows не включит его обратно после обновления.",

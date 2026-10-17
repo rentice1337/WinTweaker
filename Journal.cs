@@ -33,6 +33,11 @@ public static class Journal
         public bool Irreversible { get; set; }
         public string? Snapshot { get; set; }
         public List<RegOp> Reg { get; set; } = new();
+        /// <summary>Для настроек со значением: было/стало.</summary>
+        public int? FromValue { get; set; }
+        public int? ToValue { get; set; }
+        public string? FromText { get; set; }
+        public string? ToText { get; set; }
     }
 
     public sealed class Session
@@ -64,6 +69,22 @@ public static class Journal
             WasApplied = wasApplied,
             NowApplied = willApply,
             Irreversible = willApply && t.Revert == null
+        };
+        try { current.Snapshot = t.Snapshot?.Invoke(); } catch { }
+        s.Items.Add(current);
+    }
+
+    /// <summary>Начало записи для настройки со значением (выбор/ползунок).</summary>
+    public static void BeginValue(Session s, Tweak t, int from, int to)
+    {
+        current = new Item
+        {
+            Category = t.Category,
+            Name = t.Name,
+            FromValue = from,
+            ToValue = to,
+            FromText = t.ValueText(from),
+            ToText = t.ValueText(to)
         };
         try { current.Snapshot = t.Snapshot?.Invoke(); } catch { }
         s.Items.Add(current);
@@ -154,6 +175,11 @@ public static class Journal
 
             if (item.Snapshot != null && t?.Restore != null)
                 t.Restore(item.Snapshot);
+            else if (item.FromValue != null && t?.Set != null)
+            {
+                // значение: реестр уже восстановлен выше, Set применяет его «вживую» (скорость мыши и т.п.)
+                try { t.Set(item.FromValue.Value); } catch { }
+            }
             else if (item.Reg.Count == 0 && t != null)
             {
                 // изменение было не через реестр (PowerShell, sc, планировщик) — возвращаем прежнее состояние

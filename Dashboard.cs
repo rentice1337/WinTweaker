@@ -70,12 +70,19 @@ static class SysInfo
         return (Hklm(NT, "CurrentBuild") ?? "?") + (ubr != "" ? "." + ubr : "") + (Environment.Is64BitOperatingSystem ? " · x64" : " · x86");
     }
 
-    public static string CpuName() =>
-        (Hklm(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString")?.Trim() ?? "—")
-        + $" · {Environment.ProcessorCount} потоков";
+    /// <summary>«AMD Ryzen 5 3600 · 6 ядер, 12 потоков» — без «6-Core Processor», «(R)», «CPU @ 3.60GHz».</summary>
+    public static string CpuName()
+    {
+        string n = Hklm(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0", "ProcessorNameString")?.Trim() ?? "—";
+        n = System.Text.RegularExpressions.Regex.Replace(n, @"\((R|TM|tm|r)\)|\s+\d+-Core Processor|\s+Processor|\s+CPU|\s*@.*$|\s+with Radeon.*$", "");
+        n = System.Text.RegularExpressions.Regex.Replace(n, @"\s{2,}", " ").Trim();
+        int cores = Hardware.Cores;
+        return n + (cores > 0 ? $" · {cores} ядер, {Environment.ProcessorCount} потоков" : $" · {Environment.ProcessorCount} потоков");
+    }
 
     public static List<string> GpuList()
     {
+        if (Hardware.Gpus is { Count: > 0 } live) return live;
         var names = new List<string>();
         try
         {
@@ -550,6 +557,7 @@ class SessionWidget : Widget
             var it = session.Items[i];
             int y = r.Top + 10 + i * RowH;
             string change = it.Irreversible ? "вернуть через Microsoft Store"
+                          : it.FromText != null ? $"{it.FromText} → {it.ToText}"
                           : (it.WasApplied ? "вкл" : "выкл") + " → " + (it.NowApplied ? "вкл" : "выкл");
             var cw = TextRenderer.MeasureText(change, Theme.Tiny).Width;
             TextRenderer.DrawText(g, it.Name, Theme.Body, new Rectangle(r.Left + 18, y, r.Width - cw - 46, RowH),

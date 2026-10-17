@@ -12,21 +12,49 @@ public class Tweak
     public bool Risky { get; init; }
     public bool NeedsRestart { get; init; }
     /// <summary>Заголовок карточки внутри категории (необязательно).</summary>
-    public string? Group { get; init; }
+    public string? Group { get; set; }
     /// <summary>Разовое действие (кнопка «Запуск» вместо переключателя).</summary>
     public bool IsAction { get; init; }
     /// <summary>Для записей автозагрузки: иконка, подпись (издатель) и «Открыть папку».</summary>
     public Image? Icon { get; init; }
     public string? Subtitle { get; init; }
     public Action? OpenFolder { get; init; }
-    public required Func<bool> IsApplied { get; init; }
-    public required Action Apply { get; init; }
+    public Func<bool> IsApplied { get; init; } = () => false;
+    public Action Apply { get; init; } = () => { };
     public Action? Revert { get; init; }
     /// <summary>Для точного отката того, что меняется не через Reg (службы, схема питания, DNS).</summary>
     public Func<string>? Snapshot { get; init; }
     /// <summary>«Что именно меняется»: ключи реестра и команды — показывается до применения.</summary>
     public string? Details { get; init; }
     public Action<string>? Restore { get; init; }
+
+    // ───── Настройки со значением: выбор из вариантов или ползунок ─────
+    /// <summary>Варианты выбора (сегменты). Значение — индекс варианта.</summary>
+    public string[]? Options { get; init; }
+    /// <summary>Ползунок: диапазон, шаг и единица измерения.</summary>
+    public (int Min, int Max, int Step, string Unit)? Range { get; init; }
+    /// <summary>Подпись значения ползунка (например, «0 = никогда»).</summary>
+    public Func<int, string>? Format { get; init; }
+    public Func<int>? Get { get; init; }
+    public Action<int>? Set { get; init; }
+
+    public bool IsValue => Get != null && Set != null;
+    public bool IsToggle => !IsAction && !IsValue;
+
+    public string ValueText(int v) =>
+        Options != null ? (v >= 0 && v < Options.Length ? Options[v] : "—")
+        : Format != null ? Format(v)
+        : Range != null ? $"{v} {Range.Value.Unit}".Trim() : v.ToString();
+}
+
+static class TweakExt
+{
+    /// <summary>Положить настройку в карточку с заголовком group.</summary>
+    public static Tweak In(this Tweak t, string group)
+    {
+        t.Group = group;
+        return t;
+    }
 }
 
 /// <summary>Работа с реестром по путям вида "HKLM\SOFTWARE\...".</summary>

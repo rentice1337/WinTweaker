@@ -30,7 +30,7 @@ static class Watch
     {
         var set = AppliedByUs();
         if (set.Count == 0) return new();
-        return tweaks.Where(t => !t.IsAction && set.Contains(Key(t)) && !isOn(t)).ToList();
+        return tweaks.Where(t => t.IsToggle && t.Category != Programs.Cat && set.Contains(Key(t)) && !isOn(t)).ToList();
     }
 
     // ───────── Задание планировщика ─────────
@@ -54,7 +54,7 @@ static class Watch
         var set = AppliedByUs();
         if (set.Count == 0) return;
         var reverted = Catalog.All()
-            .Where(t => !t.IsAction && set.Contains(Key(t)))
+            .Where(t => t.IsToggle && t.Category != Programs.Cat && set.Contains(Key(t)))
             .Where(t => { try { return !t.IsApplied(); } catch { return false; } })
             .ToList();
         if (reverted.Count == 0) return;

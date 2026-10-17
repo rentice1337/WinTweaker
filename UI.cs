@@ -15,7 +15,10 @@ static class Motion
     static extern bool SystemParametersInfo(uint action, uint param, ref bool value, uint winIni);
 
     /// <summary>true, если в Windows отключены анимации (Параметры → Специальные возможности → Дисплей).</summary>
-    public static readonly bool Reduced = !QueryAnimations();
+    static readonly bool systemReduced = !QueryAnimations();
+    /// <summary>Выключено пользователем в «Настройках».</summary>
+    public static bool UserOff { get; set; }
+    public static bool Reduced => systemReduced || UserOff;
 
     static bool QueryAnimations()
     {
@@ -313,7 +316,7 @@ abstract class Surface : FadeIn
         var cur = PointToClient(Spotlight.Cursor);
         var reach = ClientRectangle;
         reach.Inflate(Spotlight.Reach, Spotlight.Reach);
-        bool near = !Motion.Reduced && reach.Contains(cur);
+        bool near = !Motion.Reduced && Spotlight.Enabled && reach.Contains(cur);
         if (near) EnsureRegions(path);
         if (near && bodyRegion != null)
         {
@@ -655,34 +658,48 @@ class SidePanel : Control
         var g = e.Graphics;
         Glass.Back(g, this);
         using (var pen = new Pen(Color.FromArgb(16, 255, 255, 255))) g.DrawLine(pen, Width - 1, 0, Width - 1, Height);
-        DrawLogo(g, new PointF(20, 18));
-    }
-
-    static void DrawLogo(Graphics g, PointF at)
-    {
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        FontFamily family;
-        try { family = new FontFamily("Segoe UI Black"); }
-        catch { family = FontFamily.GenericSansSerif; }
-        using (family)
-        using (var path = new GraphicsPath())
-        {
-            path.AddString("WINTWEAK", family, (int)FontStyle.Regular, 27f, at, StringFormat.GenericTypographic);
-            foreach (var (w, a) in new[] { (11f, 14), (7f, 26), (3.5f, 50) })
-            {
-                using var pen = new Pen(Color.FromArgb(a, Theme.Accent), w) { LineJoin = LineJoin.Round };
-                g.DrawPath(pen, path);
-            }
-            using var fill = new LinearGradientBrush(path.GetBounds(), Color.White, Theme.Lerp(Color.White, Theme.Accent, 0.35), 90f);
-            g.FillPath(fill, path);
-        }
+        Logo.Draw(g, new Point(20, 20));
     }
 }
+
+/// <summary>Логотип: плитка-переключатель цвета акцента и строгий текст с версией.</summary>
+static class Logo
+{
+    static readonly Font name = new("Segoe UI Semibold", 15f);
+
+    public static string Version
+    {
+        get
+        {
+            var v = typeof(Logo).Assembly.GetName().Version;
+            return v == null ? "1.0" : v.Build > 0 ? $"{v.Major}.{v.Minor}.{v.Build}" : $"{v.Major}.{v.Minor}";
+        }
+    }
+
+    public static void Tile(Graphics g, RectangleF tile)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var path = Theme.Round(tile, tile.Width * 0.28f))
+        using (var grad = new LinearGradientBrush(tile, Theme.AccentHi, Theme.Lerp(Theme.Accent, Color.Black, 0.15), 45f))
+            g.FillPath(grad, path);
+        float k = tile.Width / 38f;
+        Theme.Fill(g, Color.FromArgb(120, 255, 255, 255), new RectangleF(tile.X + 7 * k, tile.Y + 14 * k, 24 * k, 10 * k), 5 * k);
+        Theme.Fill(g, Color.White, new RectangleF(tile.X + 18.5f * k, tile.Y + 11.5f * k, 15 * k, 15 * k), 7.5f * k);
+    }
+
+    public static void Draw(Graphics g, Point at)
+    {
+        Tile(g, new RectangleF(at.X, at.Y, 38, 38));
+        TextRenderer.DrawText(g, "WinTweak", name, new Point(at.X + 48, at.Y - 2), Theme.Text);
+        TextRenderer.DrawText(g, $"v{Version} · Windows 10", Theme.Tiny, new Point(at.X + 50, at.Y + 23), Theme.Muted);
+    }
+}
+
 
 /// <summary>Холст меню: подписи разделов и общий скользящий индикатор выбранного пункта.</summary>
 class NavCanvas : Canvas
 {
-    public const int ItemH = 32, Step = 33;
+    public const int ItemH = 30, Step = 31;
     public readonly List<(string Text, int Y)> Labels = new();
     public readonly AnimFloat Ind;
     public double IndY => Ind.Value;
@@ -874,7 +891,10 @@ class TweakRow : Control
     public readonly FlatBtn? RunBtn;
     public readonly FlatBtn? FolderBtn;
     public readonly FlatBtn InfoBtn;
+    public readonly Segmented? Seg;
+    public readonly Slider? Slide;
     readonly AnimFloat hover, changed, flash;
+    Control Main => (Control?)Toggle ?? (Control?)RunBtn ?? (Control?)Seg ?? Slide!;
 
     public TweakRow(Tweak t)
     {
@@ -887,8 +907,19 @@ class TweakRow : Control
 
         if (t.IsAction)
         {
-            RunBtn = new FlatBtn("", "Запуск") { Height = 30 };
+            RunBtn = new FlatBtn("\uE768", "Запуск") { Height = 30 };
             Controls.Add(RunBtn);
+        }
+        else if (t.Options != null)
+        {
+            Seg = new Segmented(t.Options);
+            Controls.Add(Seg);
+        }
+        else if (t.Range != null)
+        {
+            var r = t.Range.Value;
+            Slide = new Slider(r.Min, r.Max, r.Step, t.ValueText);
+            Controls.Add(Slide);
         }
         else
         {
@@ -931,15 +962,15 @@ class TweakRow : Control
     protected override void OnMouseEnter(EventArgs e) { hover.To(1, 150); base.OnMouseEnter(e); }
     protected override void OnMouseLeave(EventArgs e) { CheckHover(); base.OnMouseLeave(e); }
 
-    int ButtonsWidth => (Toggle?.Width ?? RunBtn!.Width) + 14 + InfoBtn.Width + 4 + (FolderBtn != null ? FolderBtn.Width + 4 : 0);
+    int ButtonsWidth => Main.Width + 14 + InfoBtn.Width + 4 + (FolderBtn != null ? FolderBtn.Width + 4 : 0);
 
     protected override void OnLayout(LayoutEventArgs e)
     {
         base.OnLayout(e);
         if (InfoBtn is null) return; // раскладка может прийти из конструктора, до создания кнопок
-        int x;
-        if (Toggle != null) { Toggle.Location = new Point(Width - Toggle.Width - 6, (Height - Toggle.Height) / 2); x = Toggle.Left; }
-        else { RunBtn!.Location = new Point(Width - RunBtn.Width - 4, (Height - RunBtn.Height) / 2); x = RunBtn.Left; }
+        var main = Main;
+        main.Location = new Point(Width - main.Width - (Toggle != null ? 6 : 4), (Height - main.Height) / 2);
+        int x = main.Left;
         InfoBtn.Location = new Point(x - InfoBtn.Width - 4, (Height - InfoBtn.Height) / 2);
         if (FolderBtn != null) FolderBtn.Location = new Point(InfoBtn.Left - FolderBtn.Width - 4, (Height - FolderBtn.Height) / 2);
     }
@@ -1087,5 +1118,184 @@ static class UI
                 new Rectangle(11, 8, e.Bounds.Width - 22, e.Bounds.Height - 16), Theme.Text, flags);
         };
         return t;
+    }
+}
+
+/// <summary>Выбор из вариантов: сегменты, подсветка плавно переезжает к выбранному.</summary>
+class Segmented : Control
+{
+    readonly string[] opts;
+    readonly int[] widths;
+    int sel, hot = -1;
+    readonly AnimFloat x, w;
+    public event Action<int>? Changed;
+
+    public Segmented(string[] options)
+    {
+        opts = options;
+        SetStyle(Theme.Smooth, true);
+        Cursor = Cursors.Hand;
+        widths = opts.Select(o => TextRenderer.MeasureText(o, Theme.Tiny).Width + 18).ToArray();
+        Size = new Size(widths.Sum() + 6, 30);
+        x = new AnimFloat(XOf(0), () => Invalidate());
+        w = new AnimFloat(widths.Length > 0 ? widths[0] : 0, () => Invalidate());
+    }
+
+    float XOf(int i) => 3 + widths.Take(i).Sum();
+
+    public int Value
+    {
+        get => sel;
+        set
+        {
+            sel = Math.Clamp(value, 0, opts.Length - 1);
+            x.Set(XOf(sel));
+            w.Set(widths[sel]);
+        }
+    }
+
+    int At(int px)
+    {
+        float cx = 3;
+        for (int i = 0; i < widths.Length; i++)
+        {
+            if (px >= cx && px < cx + widths[i]) return i;
+            cx += widths[i];
+        }
+        return -1;
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        int h = At(e.X);
+        if (h != hot) { hot = h; Invalidate(); }
+        base.OnMouseMove(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e) { hot = -1; Invalidate(); base.OnMouseLeave(e); }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        int i = At(e.X);
+        if (i >= 0 && i != sel)
+        {
+            sel = i;
+            x.To(XOf(i), 260);
+            w.To(widths[i], 260);
+            Changed?.Invoke(i);
+        }
+        base.OnMouseClick(e);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        Glass.Back(g, this);
+        double a = Theme.AppearOf(this);
+        var track = new RectangleF(0.5f, 0.5f, Width - 2, Height - 2);
+        Theme.Fill(g, Color.FromArgb((int)(16 * a), 255, 255, 255), track, 9);
+        var pill = new RectangleF((float)x.Value, 3, (float)w.Value, Height - 7);
+        Theme.Glow(g, Theme.Accent, pill, 7, 2, 1.5f, (int)(60 * a));
+        Theme.Fill(g, Theme.Fade(this, Theme.AccentDim), pill, 7);
+        float cx = 3;
+        for (int i = 0; i < opts.Length; i++)
+        {
+            var col = i == sel ? Color.White : i == hot ? Theme.Text : Theme.Muted;
+            TextRenderer.DrawText(g, opts[i], Theme.Tiny, new Rectangle((int)cx, 0, widths[i], Height - 1), Theme.Fade(this, col),
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            cx += widths[i];
+        }
+    }
+}
+
+/// <summary>Ползунок со значением справа; тянется мышью, шаг задаётся настройкой.</summary>
+class Slider : Control
+{
+    readonly int min, max, step;
+    readonly Func<int, string> fmt;
+    int val;
+    bool drag;
+    readonly AnimFloat knob, hover;
+    public event Action<int>? Changed;
+    const int LabelW = 92;
+
+    public Slider(int min, int max, int step, Func<int, string> format)
+    {
+        this.min = min;
+        this.max = Math.Max(min + 1, max);
+        this.step = Math.Max(1, step);
+        fmt = format;
+        SetStyle(Theme.Smooth, true);
+        Size = new Size(250, 30);
+        Cursor = Cursors.Hand;
+        knob = new AnimFloat(0, () => Invalidate());
+        hover = new AnimFloat(0, () => Invalidate());
+    }
+
+    float TrackL => 8;
+    float TrackR => Width - LabelW - 10;
+    double Frac(int v) => (double)(v - min) / (max - min);
+
+    public int Value
+    {
+        get => val;
+        set
+        {
+            val = Math.Clamp(value, min, max);
+            knob.Set(Frac(val));
+        }
+    }
+
+    void SetFrom(int px, bool animate)
+    {
+        double f = Math.Clamp((px - TrackL) / (TrackR - TrackL), 0, 1);
+        int v = min + (int)Math.Round(f * (max - min) / step) * step;
+        v = Math.Clamp(v, min, max);
+        if (v == val) return;
+        val = v;
+        if (animate) knob.To(Frac(v), 160); else knob.Set(Frac(v));
+        Changed?.Invoke(v);
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { hover.To(1, 150); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { if (!drag) hover.To(0, 240); base.OnMouseLeave(e); }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Left && e.X < TrackR + 8) { drag = true; Capture = true; SetFrom(e.X, true); }
+        base.OnMouseDown(e);
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        if (drag) SetFrom(e.X, false);
+        base.OnMouseMove(e);
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        drag = false;
+        Capture = false;
+        if (!ClientRectangle.Contains(e.Location)) hover.To(0, 240);
+        base.OnMouseUp(e);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        Glass.Back(g, this);
+        double a = Theme.AppearOf(this), h = hover.Value;
+        float cy = Height / 2f, l = TrackL, r = TrackR;
+        float kx = l + (float)(knob.Value * (r - l));
+        Theme.Fill(g, Color.FromArgb((int)(26 * a), 255, 255, 255), new RectangleF(l, cy - 2, r - l, 4), 2);
+        var fill = new RectangleF(l, cy - 2, kx - l, 4);
+        Theme.Glow(g, Theme.Accent, fill, 2, 2, 1.5f, (int)(70 * a));
+        Theme.Fill(g, Theme.Fade(this, Theme.Accent), fill, 2);
+        float d = 14 + (float)(2 * h);
+        var kn = new RectangleF(kx - d / 2, cy - d / 2, d, d);
+        Theme.Fill(g, Color.FromArgb((int)((50 + 50 * h) * a), Theme.Accent), RectangleF.Inflate(kn, 4, 4), d);
+        Theme.Fill(g, Theme.Fade(this, Color.White), kn, d / 2);
+        TextRenderer.DrawText(g, fmt(val), Theme.Semi, new Rectangle(Width - LabelW, 0, LabelW, Height),
+            Theme.Fade(this, Theme.Text), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
     }
 }
