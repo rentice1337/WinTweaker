@@ -22,7 +22,6 @@ sealed class Tray : IDisposable
     int tick;
 
     public static Hints.Hint Current { get; private set; } = Hints.Fallback;
-    public bool HotkeyOk => hotkey.Ok;
 
     public Tray(MainForm main)
     {
@@ -31,21 +30,24 @@ sealed class Tray : IDisposable
 
         var menu = new ContextMenuStrip { Renderer = new DarkRenderer(), Font = Theme.Body };
         menu.Items.Add("Открыть WinTweak", null, (_, _) => main.ShowFromTray());
-        menu.Items.Add("Пульт   (Ctrl+Alt+W)", null, (_, _) => ToggleWheel(Cursor.Position));
+        menu.Items.Add("Пульт", null, (_, _) => ToggleWheel(Cursor.Position));
+        menu.Items.Add("Оверлей: показать / скрыть", null, (_, _) => Overlay.Toggle());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Выход", null, (_, _) => main.ExitApp());
         icon.ContextMenuStrip = menu;
 
-        hotkey = new HotkeyWindow(() => ToggleWheel(Cursor.Position));
-        SetHotkey(AppSettings.Get("hotkey", "1") == "1");
+        hotkey = new HotkeyWindow();
+        ApplyHotkeys();
 
         Sampler.Updated += Update;
         GameMode.Changed += Refresh;
         Update();
     }
 
-    /// <summary>Включить/выключить глобальную горячую клавишу Ctrl+Alt+W. Возвращает, удалось ли её занять.</summary>
-    public bool SetHotkey(bool on) => on ? hotkey.Register() : hotkey.Unregister();
+    /// <summary>Занять глобальные сочетания пульта и оверлея из настроек. Возвращает, что удалось занять.</summary>
+    public (bool Wheel, bool Overlay) ApplyHotkeys() =>
+        (hotkey.Set(1, WheelSettings.Hotkey, () => ToggleWheel(Cursor.Position)),
+         hotkey.Set(2, OverlaySettings.Hotkey, Overlay.Toggle));
 
     public void Balloon(string title, string text) => icon.ShowBalloonTip(4000, title, text, ToolTipIcon.Info);
 
@@ -112,7 +114,8 @@ sealed class Tray : IDisposable
         Sampler.Updated -= Update;
         GameMode.Changed -= Refresh;
         wheel?.Close();
-        hotkey.Unregister();
+        hotkey.Set(1, Keys.None, null);
+        hotkey.Set(2, Keys.None, null);
         hotkey.DestroyHandle();
         icon.Visible = false;
         icon.Dispose();
@@ -120,39 +123,34 @@ sealed class Tray : IDisposable
     }
 }
 
-/// <summary>Невидимое окно для глобальной горячей клавиши Ctrl+Alt+W.</summary>
+/// <summary>Невидимое окно для глобальных горячих клавиш (пульт, оверлей).</summary>
 sealed class HotkeyWindow : NativeWindow
 {
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
-    const int Id = 0x5754;
-    readonly Action pressed;
-    public bool Ok { get; private set; }
+    readonly Dictionary<int, Action> actions = new();
+    readonly HashSet<int> registered = new();
 
-    public HotkeyWindow(Action pressed)
-    {
-        this.pressed = pressed;
-        CreateHandle(new CreateParams());
-    }
+    public HotkeyWindow() => CreateHandle(new CreateParams());
 
-    public bool Register()
+    /// <summary>Занять сочетание под номером id (Keys.None — освободить). Возвращает, получилось ли.</summary>
+    public bool Set(int id, Keys combo, Action? action)
     {
-        if (Ok) return true;
-        // MOD_ALT | MOD_CONTROL | MOD_NOREPEAT
-        Ok = RegisterHotKey(Handle, Id, 0x0001 | 0x0002 | 0x4000, (uint)Keys.W);
-        return Ok;
-    }
-
-    public bool Unregister()
-    {
-        if (Ok) UnregisterHotKey(Handle, Id);
-        Ok = false;
-        return true;
+        if (registered.Remove(id)) UnregisterHotKey(Handle, id);
+        actions.Remove(id);
+        if (combo == Keys.None || action == null) return true;
+        uint mods = 0x4000; // MOD_NOREPEAT
+        if ((combo & Keys.Alt) != 0) mods |= 0x0001;
+        if ((combo & Keys.Control) != 0) mods |= 0x0002;
+        if ((combo & Keys.Shift) != 0) mods |= 0x0004;
+        bool ok = RegisterHotKey(Handle, id, mods, (uint)(combo & Keys.KeyCode));
+        if (ok) { registered.Add(id); actions[id] = action; }
+        return ok;
     }
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == 0x0312 /* WM_HOTKEY */ && (int)m.WParam == Id) pressed();
+        if (m.Msg == 0x0312 /* WM_HOTKEY */ && actions.TryGetValue((int)m.WParam, out var a)) a();
         base.WndProc(ref m);
     }
 }
@@ -166,6 +164,11 @@ static class Hints
 
     static List<MatchReport>? matches;
     static DateTime matchesAt;
+    static List<Displays.Info>? slow;
+    static DateTime slowAt;
+
+    /// <summary>Сбросить кэш (после исправления частоты и т.п.).</summary>
+    public static void Invalidate() { slow = null; matches = null; }
 
     public static Color Tint(Readiness.Level l) => l switch
     {
@@ -203,6 +206,9 @@ static class Hints
         if (cpu > 50)
             return new($"Процессор занят на {cpu:0}% — что-то работает в фоне", Readiness.Level.Warn, "",
                 _ => { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr.exe") { UseShellExecute = true }); } catch { } });
+        if (slow == null || (DateTime.Now - slowAt).TotalSeconds > 60) { try { slow = Displays.Slow(); } catch { slow = new(); } slowAt = DateTime.Now; }
+        if (slow.FirstOrDefault() is { } d)
+            return new($"Монитор работает на {d.Hz} Гц из {d.MaxHz} — включить максимум", Readiness.Level.Warn, "\uE7F4", m => m.FixRefresh());
         if (Reg.KeyExists(@"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired"))
             return new("Обновление Windows ждёт перезагрузки", Readiness.Level.Warn, "");
         if (SysInfo.UptimeDays > 7)

@@ -22,6 +22,11 @@
     <Copyright>MIT License</Copyright>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- счётчик FPS оверлея: события Windows (ETW) о показе кадров, без внедрения в игры -->
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.1.24" />
+  </ItemGroup>
+
   <!-- Один самодостаточный .exe: dotnet publish -c Release -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

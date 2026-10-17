@@ -195,11 +195,7 @@ static class Glass
             if (p is SidePanel) { Overlay(g, c, SideTint); break; }
         }
         var surface = Ancestor<Surface>(c);
-        if (surface != null)
-        {
-            Overlay(g, c, Scale(CardTint, surface.Appear));
-            surface.PaintGlowUnder(g, c);
-        }
+        if (surface != null) Overlay(g, c, Scale(CardTint, surface.Appear));
         var row = Ancestor<TweakRow>(c);
         if (row != null) Overlay(g, c, row.Overlay);
     }
@@ -248,6 +244,8 @@ static class Spotlight
     static readonly List<Surface> surfaces = new();
     static readonly HashSet<Surface> lit = new();
     public const int Reach = 90, R = 200;
+    /// <summary>Ширина полосы вдоль рамки, которую перерисовывает подсветка (скругления радиуса 12 туда помещаются).</summary>
+    public const int Band = 12;
 
     static Bitmap? soft, edge;
     static Color edgeFor;
@@ -304,6 +302,7 @@ static class Spotlight
     {
         if (!Enabled) return;
         if (Math.Abs(screen.X - Cursor.X) + Math.Abs(screen.Y - Cursor.Y) < 2) return;
+        var old = Cursor;
         Cursor = screen;
         if (Motion.Reduced) return;
         foreach (var s in surfaces.ToArray())
@@ -312,12 +311,16 @@ static class Spotlight
             var r = s.RectangleToScreen(s.ClientRectangle);
             r.Inflate(Reach, Reach);
             bool near = r.Contains(screen);
-            if (near || lit.Contains(s))
+            if (!near && !lit.Contains(s)) continue;
+            // перерисовываются только полосы вдоль рамки возле старой и новой позиции курсора:
+            // содержимое карточек (тексты, обложки, графики) при движении мыши не рисуется заново
+            // каждая полоса рисуется сразу и отдельно — так её область отрисовки не сливается в большой прямоугольник
+            foreach (var band in s.EdgeBands(s.PointToClient(old)).Concat(s.EdgeBands(s.PointToClient(screen))))
             {
-                // карточки с кнопками перерисовываются целиком (блик есть и под кнопками), списки — только рамка
-                s.Invalidate(s.LightsChildren);
-                if (near) lit.Add(s); else lit.Remove(s);
+                s.Invalidate(band, false);
+                s.Update();
             }
+            if (near) lit.Add(s); else lit.Remove(s);
         }
     }
 }

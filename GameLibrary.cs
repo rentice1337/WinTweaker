@@ -87,9 +87,16 @@ static class GameLibrary
         var found = new List<InstalledGame>();
         void Add(InstalledGame g)
         {
-            // одна игра из разных источников — оставляем первую (Steam/Epic точнее деинсталлятора)
-            if (found.Any(x => x.Dir.Equals(g.Dir, StringComparison.OrdinalIgnoreCase) ||
-                               (g.Info != null && x.Info?.Id == g.Info.Id))) return;
+            // добавленная вручную — всегда (кроме точно такого же exe)
+            if (g.Custom)
+            {
+                found.RemoveAll(x => !x.Custom && x.Exe != null && x.Exe.Equals(g.Exe, StringComparison.OrdinalIgnoreCase));
+                if (!found.Any(x => x.Custom && x.Exe!.Equals(g.Exe, StringComparison.OrdinalIgnoreCase))) found.Add(g);
+                return;
+            }
+            // одна и та же установка из разных источников — оставляем первую (Steam/Epic/EA точнее деинсталлятора);
+            // одна игра в двух магазинах (Apex в Steam и в EA app) — показываем обе
+            if (found.Any(x => SameInstall(x.Dir, g.Dir))) return;
             found.Add(g);
         }
 
@@ -126,6 +133,13 @@ static class GameLibrary
         // сначала игры с пресетами, затем по алфавиту
         return found.Where(g => g.Exe != null)
             .OrderBy(g => g.Info == null).ThenBy(g => g.Title, StringComparer.CurrentCultureIgnoreCase).ToList();
+    }
+
+    static bool SameInstall(string a, string b)
+    {
+        a = a.TrimEnd('\\') + "\\";
+        b = b.TrimEnd('\\') + "\\";
+        return a.StartsWith(b, StringComparison.OrdinalIgnoreCase) || b.StartsWith(a, StringComparison.OrdinalIgnoreCase);
     }
 
     public static void AddCustom(string exe)
@@ -311,6 +325,16 @@ static class GameLibrary
             }
         }
 
+        // главный источник — список установленных игр самого EA app (файл IS)
+        var known = new List<EaInstalls.Entry>();
+        try { known = EaInstalls.Read(); } catch { }
+        foreach (var e in known)
+        {
+            string title = EaTitle(e.Dir) ?? Pretty(e.Slug) ?? Path.GetFileName(e.Dir);
+            var info = GameCatalog.Match(title) ?? GameCatalog.Match(Pretty(e.Slug) ?? "") ?? GameCatalog.Match(Path.GetFileName(e.Dir));
+            yield return new InstalledGame { Name = info?.Name ?? title, Source = "EA app", Dir = e.Dir, Info = info };
+        }
+
         var dirs = new List<string>();
         foreach (var root in roots.Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists))
         {
@@ -334,11 +358,17 @@ static class GameLibrary
         {
             string name = EaTitle(dir) ?? Path.GetFileName(dir);
             if (name == "" || Launchers.Any(l => name.Equals(l, StringComparison.OrdinalIgnoreCase))) continue;
-            // папка без __Installer и без пресета — скорее всего не игра EA
             var info = GameCatalog.Match(name) ?? GameCatalog.Match(Path.GetFileName(dir));
-            if (info == null && !Directory.Exists(Path.Combine(dir, "__Installer"))) continue;
             yield return new InstalledGame { Name = info?.Name ?? name, Source = "EA app", Dir = dir, Info = info };
         }
+    }
+
+    /// <summary>«apex-legends» → «Apex Legends».</summary>
+    static string? Pretty(string slug)
+    {
+        if (string.IsNullOrWhiteSpace(slug)) return null;
+        var words = slug.Replace('_', '-').Split('-', StringSplitOptions.RemoveEmptyEntries);
+        return string.Join(" ", words.Select(w => char.ToUpperInvariant(w[0]) + w[1..]));
     }
 
     /// <summary>Название игры из __Installer\installerdata.xml (gameTitle en_US или первый).</summary>

@@ -215,7 +215,7 @@ class ReadyWidget : Widget
             var lc = GameUI.LevelColor(c.Level);
             GameUI.Dot(g, lc, cx + 2, cy + 6, 8, Appear);
             string? fix = c.Level is Readiness.Level.Warn or Readiness.Level.Bad
-                ? c.Tweaks != null ? "Исправить" : c.Action == "close" ? "Фоновые программы" : null
+                ? c.Tweaks != null ? "Исправить" : c.Action == "close" ? "Фоновые программы" : c.Action == "refresh" ? "Включить максимум" : null
                 : null;
             int fixW = fix == null ? 0 : TextRenderer.MeasureText(fix, Theme.Semi).Width + 6;
             TextRenderer.DrawText(g, c.Title, Theme.Semi, new Rectangle(cx + 18, cy, colW - 18 - fixW - 8, 20), C(Theme.Text), flags);

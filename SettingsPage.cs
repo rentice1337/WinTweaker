@@ -60,14 +60,9 @@ public partial class MainForm
                 bool ok = await RunBusy(on ? "Включаю автозапуск…" : "Выключаю автозапуск…", on ? () => Autostart.Install() : () => Autostart.Uninstall());
                 autostartOn = ok ? on : !on;
             });
-        tray.Add("Пульт по Ctrl+Alt+W", "Круговой пульт у курсора из любой программы (и по клику на значок в трее)",
-            () => AppSettings.Get("hotkey", "1") == "1", on =>
-            {
-                AppSettings.Set("hotkey", on ? "1" : "0");
-                bool ok = this.tray?.SetHotkey(on) ?? true;
-                if (on && !ok) Toast.Pop(this, "Ctrl+Alt+W уже занято другой программой — пульт открывается кликом по значку", Tone.Warning);
-            });
         cv.Controls.Add(tray);
+        BuildWheelCard(cv);
+        BuildOverlayCards(cv);
 
         // ── Свои наборы ──
         var sets = new SetsWidget(Sets.Load(), s => Shareable.Count(t => s.Tweaks.Contains(t.Name)));

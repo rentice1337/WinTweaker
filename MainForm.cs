@@ -630,6 +630,35 @@ public partial class MainForm : Form
         if (dnsCache != null) dns.SetData(dnsCache, dnsCurrent);
         cv.Controls.Add(dns);
         _ = LoadDiagAsync(boot, crash);
+
+        var health = new DiskHealthWidget();
+        cv.Controls.Add(health);
+        _ = LoadHealth(health);
+
+        var space = new DiskSpaceWidget();
+        space.Run.Click += async (_, _) => { space.Trail.Clear(); await ScanSpace(space, space.Root); };
+        space.Back.Click += async (_, _) => { if (space.Trail.Count > 0) await ScanSpace(space, space.Trail.Pop(), push: false); };
+        space.Open += async it => { space.Trail.Push(space.Root); await ScanSpace(space, it.Path, push: false); };
+        space.Reveal += it => { try { System.Diagnostics.Process.Start("explorer.exe", it.IsDir && it.Name != "Файлы в этой папке" ? $"\"{it.Path}\"" : $"/select,\"{it.Path}\""); } catch { } };
+        cv.Controls.Add(space);
+    }
+
+    async Task LoadHealth(DiskHealthWidget w)
+    {
+        var list = await Task.Run(() => { try { return DiskHealth.Read(); } catch { return new List<DiskHealth.Disk>(); } });
+        if (w.IsDisposed) return;
+        w.SetData(list);
+        Relayout();
+    }
+
+    async Task ScanSpace(DiskSpaceWidget w, string root, bool push = true)
+    {
+        if (w.Busy) return;
+        w.Begin(root);
+        var list = await Task.Run(() => DiskSpace.Scan(root, n => BeginInvoke(() => { if (!w.IsDisposed) w.Progress(n); })));
+        if (w.IsDisposed) return;
+        w.SetData(list);
+        Relayout();
     }
 
     async Task LoadDiagAsync(BootWidget boot, CrashWidget crash)

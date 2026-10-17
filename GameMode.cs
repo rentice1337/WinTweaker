@@ -580,6 +580,12 @@ static class Readiness
             }
         }
         catch { }
+        try
+        {
+            foreach (var d in Displays.Slow())
+                list.Add(new($"Монитор на {d.Hz} Гц", $"{d.Name} умеет {d.MaxHz} Гц — в играх будет заметно плавнее", Level.Warn, null, "refresh"));
+        }
+        catch { }
         if (GameNet.WifiName() is string wifi)
             list.Add(new("Wi-Fi", $"Подключение по «{wifi}» — кабель даёт ровнее пинг. В игровом режиме можно выключить фоновый поиск сетей", Level.Info));
 

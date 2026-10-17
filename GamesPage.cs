@@ -24,13 +24,22 @@ public partial class MainForm
             libWidget.SetData(GameLibrary.Games);
             if (selected == GamesHub) Relayout();
         };
-        GameWatcher.Started += _ =>
+        GameWatcher.Started += run =>
         {
+            // статистика: средний FPS за сессию; оверлей — если включён автопоказ
+            FpsMeter.Acquire();
+            FpsMeter.Pid = run.Pid;
+            FpsMeter.SessionAverage(reset: true);
+            Overlay.GameStarted();
             gameBanner?.Sync();
             libWidget?.Invalidate(false);
         };
         GameWatcher.Ended += (run, rep) =>
         {
+            var fps = FpsMeter.SessionAverage(reset: true);
+            FpsMeter.Release();
+            Overlay.GameEnded();
+            GameStats.Add(new PlaySession { Game = run.Name, Start = run.Since, End = DateTime.Now, Fps = fps, Ping = rep?.Avg });
             if (rep != null)
                 tray?.Balloon($"{run.Name} · {GameUI.Duration(rep.Duration)}",
                     $"Пинг {rep.Avg:0} мс ±{rep.Jitter:0}, потери {rep.Loss:0.#}%. {rep.Verdict().Text}");
@@ -57,6 +66,7 @@ public partial class MainForm
         ready.FixAll.Click += (_, _) => FixChecks(ready.Data.Where(c => c.Tweaks != null && c.Level is Readiness.Level.Warn or Readiness.Level.Bad));
         ready.FixClicked += c =>
         {
+            if (c.Action == "refresh") { FixRefresh(); _ = RunReady(ready); return; }
             if (c.Tweaks != null) FixChecks(new[] { c });
             else if (c.Action == "close" && bgWidget is { IsDisposed: false } bg)
             {
@@ -75,6 +85,7 @@ public partial class MainForm
         lib.Rescan.Click += async (_, _) => { await GameLibrary.ScanAsync(); Toast.Pop(this, $"Найдено игр: {GameLibrary.Games.Count}", Tone.Info); };
         cv.Controls.Add(lib);
         libWidget = lib;
+        cv.Controls.Add(new StatsWidget(GameStats.Load()));
         if (!GameLibrary.Scanned) _ = GameLibrary.ScanAsync();
 
         // ── пинг и трассировка ──
@@ -136,7 +147,17 @@ public partial class MainForm
         quick.Click += (_, _) => { GpuReset.Quick(); Toast.Pop(this, "Видеодрайвер перезапущен", Tone.Info); };
         var full = new ActionTile("\uE7E8", "Перезапуск видеокарты", "Если завис драйвер или чёрный экран");
         full.Click += async (_, _) => await FullGpuReset();
-        cv.Controls.Add(new ActionsWidget("Видеодрайвер", quick, full));
+        var mouseTest = new ActionTile("\uE962", "Тест мыши", "Реальная частота опроса");
+        mouseTest.Click += (_, _) => { using var d = new MouseTestDialog(); d.ShowDialog(this); };
+        var overlay = new ActionTile("\uE7B3", "Оверлей", "Показать / скрыть · " + WheelSettings.Format(OverlaySettings.Hotkey));
+        overlay.Click += (_, _) => Overlay.Toggle();
+        cv.Controls.Add(new ActionsWidget("Инструменты", quick, full, mouseTest, overlay));
+
+        // ── частота мониторов ──
+        var disp = new DisplayWidget();
+        disp.Fix.Click += (_, _) => { FixRefresh(); _ = LoadDisplays(disp); };
+        cv.Controls.Add(disp);
+        _ = LoadDisplays(disp);
 
         // ── кэш шейдеров ──
         var shader = new ShaderWidget();
@@ -174,6 +195,27 @@ public partial class MainForm
             Toast.Pop(this, "Игровой режим включён");
         }
         gameBanner?.Sync();
+    }
+
+    // ───────── Частота мониторов ─────────
+
+    async Task LoadDisplays(DisplayWidget w)
+    {
+        var list = await Task.Run(Displays.All);
+        if (w.IsDisposed) return;
+        w.SetData(list);
+        Relayout();
+    }
+
+    /// <summary>Поставить всем мониторам максимальную частоту при текущем разрешении.</summary>
+    public void FixRefresh()
+    {
+        var slow = Displays.Slow();
+        if (slow.Count == 0) { Toast.Pop(this, "Мониторы уже на максимальной частоте", Tone.Info); return; }
+        int ok = slow.Count(Displays.SetMax);
+        Toast.Pop(this, ok == slow.Count ? "Частота: " + string.Join(", ", slow.Select(d => $"{d.MaxHz} Гц")) : "Не удалось сменить частоту — попробуйте в настройках драйвера",
+            ok == slow.Count ? Tone.Success : Tone.Warning);
+        Hints.Invalidate();
     }
 
     // ───────── Готовность ─────────

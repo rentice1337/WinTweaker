@@ -37,11 +37,11 @@ static class Motion
 
     static readonly Stopwatch clock = Stopwatch.StartNew();
     static readonly List<Tween> tweens = new();
-    static readonly System.Windows.Forms.Timer timer = new() { Interval = 7 };
+    static readonly System.Windows.Forms.Timer timer = new() { Interval = 16 };
 
     static Motion()
     {
-        // разрешение системного таймера 1 мс: анимации идут ровно ~120 кадров/с, а не рывками по 15,6 мс
+        // разрешение системного таймера 1 мс: кадры анимаций идут ровно раз в 16 мс (~60 кадров/с), а не рывками по 15,6–31 мс
         try { timeBeginPeriod(1); } catch { }
         timer.Tick += (_, _) => Tick();
     }
@@ -318,16 +318,10 @@ abstract class Surface : FadeIn
         reach.Inflate(Spotlight.Reach, Spotlight.Reach);
         bool near = !Motion.Reduced && Spotlight.Enabled && reach.Contains(cur);
         if (near) EnsureRegions(path);
-        if (near && bodyRegion != null && LightsChildren)
-        {
-            // мягкий блик внутри карточки — готовая картинка, обрезанная по форме тела
-            var st = g.Save();
-            g.SetClip(bodyRegion, CombineMode.Intersect);
-            g.DrawImageUnscaled(Spotlight.Soft, cur.X - Spotlight.R, cur.Y - Spotlight.R);
-            g.Restore(st);
-        }
 
-        PaintBody(g, Rectangle.Round(body));
+        // перерисовка только рамки (подсветка под курсором) — содержимое карточки не трогаем
+        var inner = Rectangle.Inflate(Rectangle.Round(body), -Spotlight.Band, -Spotlight.Band);
+        if (e.ClipRectangle.IntersectsWith(inner)) PaintBody(g, Rectangle.Round(body));
 
         using (var pen = new Pen(Glass.Scale(Edge ?? Glass.Border, Appear))) g.DrawPath(pen, path);
         if (near && edgeRegion != null)
@@ -343,51 +337,23 @@ abstract class Surface : FadeIn
     Region? bodyRegion, edgeRegion;
     Size regionsFor;
 
-    /// <summary>
-    /// Мягкий блик внутри карточки рисуется и под дочерними контролами (кнопки, переключатели, плитки) —
-    /// иначе вокруг них видны тёмные прямоугольники. Для карточек со множеством строк (списки настроек)
-    /// блика внутри нет, только подсветка рамки: перерисовывать десятки строк на каждое движение мыши дорого.
-    /// </summary>
-    public bool LightsChildren => this is not Card && Descendants(this) <= 40;
-
-    static int Descendants(Control c)
+    /// <summary>Полосы вдоль рамки возле точки (координаты карточки) — только их перерисовывает подсветка.</summary>
+    public IEnumerable<Rectangle> EdgeBands(Point p)
     {
-        int n = 0;
-        foreach (Control x in c.Controls) n += 1 + Descendants(x);
-        return n;
-    }
-
-    /// <summary>Кусок блика под дочерним контролом (вызывается из Glass.Back).</summary>
-    public void PaintGlowUnder(Graphics g, Control child)
-    {
-        if (Motion.Reduced || !Spotlight.Enabled || !LightsChildren) return;
-        var cur = PointToClient(Spotlight.Cursor);
-        var reach = ClientRectangle;
-        reach.Inflate(Spotlight.Reach, Spotlight.Reach);
-        if (!reach.Contains(cur)) return;
-        using (var path = Theme.Round(BodyF, 12)) EnsureRegions(path);
-        if (bodyRegion == null) return;
-        int ox = 0, oy = 0;
-        for (var p = child; p != null && p != this; p = p.Parent) { ox += p.Left; oy += p.Top; }
-        using var reg = bodyRegion.Clone();
-        reg.Translate(-ox, -oy);
-        var st = g.Save();
-        g.CompositingMode = CompositingMode.SourceOver;
-        g.SetClip(reg, CombineMode.Intersect);
-        g.DrawImageUnscaled(Spotlight.Soft, cur.X - ox - Spotlight.R, cur.Y - oy - Spotlight.R);
-        g.Restore(st);
-    }
-
-    void EnsureRegions(GraphicsPath path)
-    {
-        if (bodyRegion != null && regionsFor == Size) return;
-        bodyRegion?.Dispose();
-        edgeRegion?.Dispose();
-        bodyRegion = new Region(path);
-        using var ring = (GraphicsPath)path.Clone();
-        using (var pen = new Pen(Color.Black, 2f)) ring.Widen(pen);
-        edgeRegion = new Region(ring);
-        regionsFor = Size;
+        int b = Spotlight.Band, top = HeadH;
+        var area = new Rectangle(p.X - Spotlight.R, p.Y - Spotlight.R, Spotlight.R * 2, Spotlight.R * 2);
+        var bands = new[]
+        {
+            new Rectangle(0, top - 1, Width, b + 1),
+            new Rectangle(0, Height - b, Width, b),
+            new Rectangle(0, top, b, Height - top),
+            new Rectangle(Width - b, top, b, Height - top),
+        };
+        foreach (var r in bands)
+        {
+            var x = Rectangle.Intersect(r, area);
+            if (x.Width > 0 && x.Height > 0) yield return x;
+        }
     }
 
     protected virtual void PaintBody(Graphics g, Rectangle r) { }

@@ -140,8 +140,13 @@ sealed record WheelCmd(string Title, string Short, string Glyph, string Sub, Act
 /// </summary>
 sealed class TrayWheel : LayeredForm
 {
+    // геометрия в «базовых» пикселях; размер пульта — масштабом при рисовании и в обработке мыши
     const int S = 600;
     const float C = S / 2f, R0 = 56, Ri = 68, Ro = 150, Gi = 166, Go = 242;
+    readonly float k;
+    readonly int gamesMax, gamesIdx;
+    readonly bool showHint;
+    readonly string[] ids;
 
     static readonly Font IconF = new("Segoe MDL2 Assets", 13f), IconS = new("Segoe MDL2 Assets", 10f);
     static readonly Font LabelF = new("Segoe UI Semibold", 7.75f), BigF = new("Segoe UI Semibold", 17f),
@@ -172,17 +177,24 @@ sealed class TrayWheel : LayeredForm
     bool dirty = true;
 
     bool Search => query.Length > 0;
-    int SlotCount => Math.Min(10, games.Count);
+    int SlotCount => gamesIdx < 0 ? 0 : Math.Min(gamesMax, games.Count);
 
     public TrayWheel(MainForm main, Point at)
     {
         this.main = main;
         KeyPreview = true;
-        Size = new Size(S, S);
+        k = WheelSettings.Scale;
+        gamesMax = WheelSettings.Games;
+        showHint = WheelSettings.Hint;
+        ids = WheelSettings.Sectors;
+        gamesIdx = Array.IndexOf(ids, "games");
+        int px = (int)Math.Round(S * k);
+        Size = new Size(px, px);
         var area = Screen.FromPoint(at).WorkingArea;
-        Location = new Point(Math.Clamp(at.X - S / 2, area.Left, Math.Max(area.Left, area.Right - S)),
-                             Math.Clamp(at.Y - S / 2, area.Top, Math.Max(area.Top, area.Bottom - S)));
-        games = GameLibrary.Games.Where(g => g.Exe != null).Take(10).ToList();
+        if (WheelSettings.Centered) at = new Point(area.Left + area.Width / 2, area.Top + area.Height / 2);
+        Location = new Point(Math.Clamp(at.X - px / 2, area.Left, Math.Max(area.Left, area.Right - px)),
+                             Math.Clamp(at.Y - px / 2, area.Top, Math.Max(area.Top, area.Bottom - px)));
+        games = GameLibrary.Games.Where(g => g.Exe != null).Take(gamesMax).ToList();
         hint = Tray.Current;
         try { hint = Hints.Compute(main); } catch { }
         defaults = Defaults();
@@ -224,34 +236,68 @@ sealed class TrayWheel : LayeredForm
 
     // ───────── Команды ─────────
 
-    WheelCmd[] Defaults()
+    WheelCmd[] Defaults() => ids.Select(Make).ToArray();
+
+    /// <summary>Команда по её идентификатору (список — в <see cref="WheelSettings.Actions"/>).</summary>
+    WheelCmd Make(string id)
     {
-        string modeSub = GameMode.Active ? $"включён · {GameMode.Reason}" : GameWatcher.Enabled ? "выключен · включится сам при запуске игры" : "выключен";
-        return new[]
+        string hub = MainForm.GamesPageName;
+        switch (id)
         {
-            new WheelCmd("Игровой режим", GameMode.Active ? "Режим: вкл" : "Игровой", "", modeSub, ToggleMode, true),
-            new WheelCmd("Игры", "Игры", "", games.Count == 0 ? (GameLibrary.Scanned ? "игр не найдено" : "ищу игры…") : $"{games.Count} — запуск в один клик",
-                () => { ringWanted = true; dirty = true; }, true),
-            new WheelCmd("Открыть WinTweak", "Открыть", "", "главное окно", main.ShowFromTray),
-            new WheelCmd("Готовность", "Готовность", "", "проверить ПК перед игрой", RunReady, true),
-            new WheelCmd("Выход", "Выход", "", "закрыть WinTweak", main.ExitApp),
-            new WheelCmd("Сброс драйвера", "Драйвер", "", "как Win+Ctrl+Shift+B — экран мигнёт",
-                () => { var t = new System.Windows.Forms.Timer { Interval = 180 }; t.Tick += (_, _) => { t.Dispose(); GpuReset.Quick(); }; t.Start(); }),
-            new WheelCmd("Очистить кэш DNS", "DNS", "", "если сайт «переехал» или не открывается", FlushDns, true),
-            new WheelCmd("Пинг", "Пинг", "", $"до {GameMode.Target}", RunPing, true),
-        };
+            case "mode":
+                string modeSub = GameMode.Active ? $"включён · {GameMode.Reason}" : GameWatcher.Enabled ? "выключен · включится сам при запуске игры" : "выключен";
+                return new WheelCmd("Игровой режим", GameMode.Active ? "Режим: вкл" : "Игровой", "\uE7FC", modeSub, ToggleMode, true);
+            case "games":
+                return new WheelCmd("Игры", "Игры", "\uE768", games.Count == 0 ? (GameLibrary.Scanned ? "игр не найдено" : "ищу игры…") : $"{games.Count} — запуск в один клик",
+                    () => { ringWanted = true; dirty = true; }, true);
+            case "open": return new WheelCmd("Открыть WinTweak", "Открыть", "\uE8A7", "главное окно", main.ShowFromTray);
+            case "ready": return new WheelCmd("Готовность", "Готовность", "\uE9D9", "проверить ПК перед игрой", RunReady, true);
+            case "exit": return new WheelCmd("Выход", "Выход", "\uE7E8", "закрыть WinTweak", main.ExitApp);
+            case "gpu":
+                return new WheelCmd("Сброс драйвера", "Драйвер", "\uE7F4", "как Win+Ctrl+Shift+B — экран мигнёт",
+                    () => { var t = new System.Windows.Forms.Timer { Interval = 180 }; t.Tick += (_, _) => { t.Dispose(); GpuReset.Quick(); }; t.Start(); });
+            case "dns": return new WheelCmd("Очистить кэш DNS", "DNS", "\uE774", "если сайт «переехал» или не открывается", FlushDns, true);
+            case "ping": return new WheelCmd("Пинг", "Пинг", "\uE701", $"до {GameMode.Target}", RunPing, true);
+            case "overlay":
+                return new WheelCmd("Оверлей", Overlay.Visible ? "Оверлей: вкл" : "Оверлей", "\uE7F4", Overlay.Visible ? "скрыть игровой оверлей" : "показать игровой оверлей",
+                    () => { Overlay.Toggle(); Refresh("overlay"); }, true);
+            case "apply":
+                return new WheelCmd("Применить изменения", "Применить", "\uE74E", main.PendingCount > 0 ? $"ждут: {main.PendingCount}" : "нет изменений", main.ReviewPending);
+            case "hub": return new WheelCmd("Игровой центр", "Игр. центр", "\uE7FC", "игры, пинг, готовность", () => main.OpenPage(hub));
+            case "diag": return new WheelCmd("Диагностика", "Диагностика", "\uE9D9", "загрузка, сбои, диски", () => main.OpenPage("Диагностика"));
+            case "settings": return new WheelCmd("Настройки WinTweak", "Настройки", "\uE713", "оформление, трей, пульт", () => main.OpenPage("Настройки"));
+            case "taskmgr":
+                return new WheelCmd("Диспетчер задач", "Диспетчер", "\uE9D9", "кто грузит систему",
+                    () => { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr.exe") { UseShellExecute = true }); } catch { } });
+            case "lock": return new WheelCmd("Заблокировать ПК", "Блок", "\uE72E", "как Win+L", () => LockWorkStation());
+            case "explorer": return new WheelCmd("Перезапустить Проводник", "Проводник", "\uE8B7", "если зависла панель задач", () => Task.Run(Catalog.RestartExplorer));
+            case "report":
+                var last = Matches.Load().FirstOrDefault();
+                return new WheelCmd("Последний отчёт", "Отчёт", "\uE9D9", last != null ? $"{last.Game} · {last.Avg:0} мс" : "отчётов пока нет",
+                    () => { if (last != null) main.OpenReport(last); });
+            case "refresh": return new WheelCmd("Частота монитора", "Герцы", "\uE7F4", "проверить и включить максимум", () => main.OpenPage(hub));
+            default: return new WheelCmd("—", "", "", "пусто", () => { }, true);
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool LockWorkStation();
+
+    /// <summary>Обновить подпись сектора после действия (если он есть на кольце).</summary>
+    void Refresh(string id)
+    {
+        int i = Array.IndexOf(ids, id);
+        if (i >= 0) defaults[i] = Make(id);
+        dirty = true;
     }
 
     /// <summary>Всё, что можно найти: действия пульта, разделы, игры, настройки.</summary>
     List<WheelCmd> BuildIndex()
     {
-        var list = defaults.Where(d => d.Title != "Игры").ToList();
+        var list = WheelSettings.Actions.Where(a => a.Id != "games").Select(a => Make(a.Id)).ToList();
         list.Add(new WheelCmd("Пинг до серверов", "Серверы", "", "Valve, AWS, свой адрес", () => main.OpenPage(MainForm.GamesPageName), Rank: 1));
         list.Add(new WheelCmd("Трассировка", "Трасса", "", "путь до сервера", () => main.OpenPage(MainForm.GamesPageName), Rank: 1));
         list.Add(new WheelCmd("Перезапуск видеокарты", "Видеокарта", "", "в игровом центре", () => main.OpenPage(MainForm.GamesPageName), Rank: 1));
         list.Add(new WheelCmd("Кэш шейдеров", "Шейдеры", "", "в игровом центре", () => main.OpenPage(MainForm.GamesPageName), Rank: 1));
-        if (main.PendingCount > 0)
-            list.Add(new WheelCmd("Применить изменения", "Применить", "", $"ждут: {main.PendingCount}", main.ReviewPending, Rank: 2));
         foreach (var (cat, glyph) in MainForm.Pages)
             list.Add(new WheelCmd(cat, cat, glyph, "раздел", () => main.OpenPage(cat), Rank: 1));
         foreach (var g in GameLibrary.Games.Where(g => g.Exe != null))
@@ -333,7 +379,7 @@ sealed class TrayWheel : LayeredForm
         }
         catch { }
         if (IsDisposed) return;
-        defaults[0] = Defaults()[0];
+        Refresh("mode");
         Message(on ? "Режим включён" : "Режим выключен", on ? "без уведомлений и обновлений" : "всё вернулось как было", on ? Theme.Accent : Theme.Text);
     }
 
@@ -384,7 +430,7 @@ sealed class TrayWheel : LayeredForm
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
-        mouse = e.Location;
+        mouse = new Point((int)(e.X / k), (int)(e.Y / k));
         UpdateHover();
         base.OnMouseMove(e);
     }
@@ -402,7 +448,7 @@ sealed class TrayWheel : LayeredForm
             {
                 double step = 360.0 / SlotCount;
                 game = (int)(((a + step / 2) % 360) / step) % SlotCount;
-                sec = 1;
+                sec = gamesIdx;
             }
             else if (d >= R0 + 2) sec = (int)(((a + 22.5) % 360) / 45) % 8;
         }
@@ -509,21 +555,21 @@ sealed class TrayWheel : LayeredForm
         if (a != Alpha) { Alpha = a; anim = true; }
 
         // кольцо игр: открывается, если задержаться на «Играх»; закрывается, если уйти к другим секторам
-        bool onGames = !Search && (hoverGame >= 0 || Selected == 1);
+        bool onGames = !Search && gamesIdx >= 0 && (hoverGame >= 0 || Selected == gamesIdx);
         if (onGames)
         {
-            if (hover == 1 && now - hoverSince > 160) ringWanted = true;
-            if (keySel == 1) ringWanted = true;
+            if (hover == gamesIdx && now - hoverSince > 160) ringWanted = true;
+            if (keySel == gamesIdx) ringWanted = true;
             leaveSince = now;
         }
-        else if (ringWanted && !hoverPill && now - leaveSince > 220 && (hover >= 0 && hover != 1 || keySel >= 0 && keySel != 1)) ringWanted = false;
+        else if (ringWanted && !hoverPill && now - leaveSince > 220 && (hover >= 0 && hover != gamesIdx || keySel >= 0 && keySel != gamesIdx)) ringWanted = false;
         double rt = ringWanted ? 1 : 0;
         if (Math.Abs(ringP - rt) > 0.002) { ringP += (rt - ringP) * (Motion.Reduced ? 1 : 0.2); anim = true; }
         else ringP = rt;
 
         for (int i = 0; i < 8; i++)
         {
-            double t = i == Selected && At(i) != null && hoverGame < 0 ? 1 : i == 1 && ringP > 0.5 ? 0.6 : 0;
+            double t = i == Selected && At(i) != null && hoverGame < 0 ? 1 : i == gamesIdx && ringP > 0.5 ? 0.6 : 0;
             if (Math.Abs(hl[i] - t) > 0.004) { hl[i] += (t - hl[i]) * (Motion.Reduced ? 1 : 0.24); anim = true; }
             else hl[i] = t;
         }
@@ -551,6 +597,7 @@ sealed class TrayWheel : LayeredForm
 
     protected override void Draw(Graphics g)
     {
+        g.ScaleTransform(k, k);
         double now = Motion.Now;
         double open = Motion.Reduced ? 1 : Math.Min(1, (now - openStart) / 420);
 
@@ -566,7 +613,8 @@ sealed class TrayWheel : LayeredForm
             DrawSector(g, i, pi);
         }
         DrawCenter(g, Motion.ExpoOut(open));
-        DrawPill(g, Motion.ExpoOut(Math.Clamp((now - openStart - 160) / 300, 0, 1)));
+        if (showHint) DrawPill(g, Motion.ExpoOut(Math.Clamp((now - openStart - 160) / 300, 0, 1)));
+        else pill = RectangleF.Empty;
     }
 
     void DrawSector(Graphics g, int i, double pi)
