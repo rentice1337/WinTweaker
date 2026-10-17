@@ -397,7 +397,7 @@ class AboutWidget : Widget
     {
         Logo.Tile(g, new RectangleF(r.Left + 18, r.Top + 18, 48, 48));
         TextRenderer.DrawText(g, "WinTweak", Theme.F(15f, FontStyle.Bold), new Point(r.Left + 78, r.Top + 16), C(Theme.Text));
-        TextRenderer.DrawText(g, $"Версия {Logo.Version} · настройка Windows 10 · MIT", Theme.Tiny, new Point(r.Left + 80, r.Top + 44), C(Theme.Muted));
+        TextRenderer.DrawText(g, $"Версия {Logo.Version} · {Logo.Copyright}", Theme.Tiny, new Point(r.Left + 80, r.Top + 44), C(Theme.Muted));
         TextRenderer.DrawText(g, "Каждое изменение записывается в «Историю» и откатывается в один клик.", Theme.Tiny,
             new Rectangle(r.Left + 18, r.Top + 76, r.Width - 36, 18), C(Theme.Dim), TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
     }

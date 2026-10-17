@@ -129,7 +129,8 @@ class WelcomeDialog : RoundForm
         TextRenderer.DrawText(g, "Крестик прячет окно; в трее — значок и круговой пульт (Ctrl+Alt+W)", Theme.Tiny, new Rectangle(24, 192, Width - 110, 18), Theme.Muted, TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, "Запускать вместе с Windows", Theme.Semi, new Point(24, 230), Theme.Text);
         TextRenderer.DrawText(g, "Нужно, чтобы игровой режим включался сам при запуске игр", Theme.Tiny, new Rectangle(24, 252, Width - 110, 18), Theme.Muted, TextFormatFlags.EndEllipsis);
-        TextRenderer.DrawText(g, "Это можно поменять в любой момент в «Настройках».", Theme.Tiny, new Rectangle(24, Height - 54, 320, 20), Theme.Dim, TextFormatFlags.Left);
+        TextRenderer.DrawText(g, "Это можно поменять в любой момент в «Настройках».", Theme.Tiny, new Rectangle(24, Height - 58, 320, 20), Theme.Dim, TextFormatFlags.Left);
+        TextRenderer.DrawText(g, Logo.Copyright, Theme.Tiny, new Rectangle(24, Height - 38, 320, 20), Theme.Dim, TextFormatFlags.Left);
     }
 }
 

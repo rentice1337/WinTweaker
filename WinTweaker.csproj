@@ -16,10 +16,11 @@
     <Version>1.0.0</Version>
     <Product>WinTweak</Product>
     <Company>rentice1337</Company>
+    <NeutralLanguage>ru-RU</NeutralLanguage>
     <Authors>rentice1337</Authors>
-    <AssemblyTitle>WinTweak — настройка Windows 10</AssemblyTitle>
+    <AssemblyTitle>WinTweak — настройка Windows 10 и игр</AssemblyTitle>
     <Description>WinTweak — настройка Windows 10 и игр</Description>
-    <Copyright>© 2026 rentice1337 · MIT License</Copyright>
+    <Copyright>© 2026 rentice1337. Все права защищены.</Copyright>
     <RepositoryUrl>https://github.com/rentice1337/WinTweaker</RepositoryUrl>
   </PropertyGroup>
 

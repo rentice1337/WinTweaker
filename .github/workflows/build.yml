@@ -36,6 +36,9 @@ jobs:
     timeout-minutes: 20
     env:
       TAG: ${{ github.event.inputs.tag || (github.event_name == 'release' && github.event.release.tag_name) || (github.ref_type == 'tag' && github.ref_name) || '' }}
+      # ключ цифровой подписи (создаётся один раз скриптом tools/New-SigningCert.ps1); нет секретов — exe без подписи
+      SIGN_PFX: ${{ secrets.SIGN_PFX_BASE64 }}
+      SIGN_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,6 +70,37 @@ jobs:
           if ($text -notmatch 'requireAdministrator') { throw 'В WinTweaker.exe нет манифеста requireAdministrator' }
           'Манифест requireAdministrator на месте'
 
+      - name: Sign
+        if: env.SIGN_PFX != '' && github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'sign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_PFX.Trim()))
+          try {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+              Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $signtool) { throw 'signtool.exe не найден' }
+            # метка времени: подпись остаётся действительной и после окончания срока сертификата
+            $ok = $false
+            foreach ($ts in 'http://timestamp.digicert.com', 'http://timestamp.sectigo.com', 'http://timestamp.globalsign.com/tsa/r6advanced1') {
+              & $signtool.FullName sign /fd SHA256 /f $pfx /p $env:SIGN_PASSWORD /tr $ts /td SHA256 `
+                /d 'WinTweak' /du 'https://github.com/${{ github.repository }}' publish\WinTweaker.exe
+              if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+              Write-Warning "Сервер меток времени $ts не ответил, пробую следующий"
+            }
+            if (-not $ok) { throw 'Не удалось подписать WinTweaker.exe' }
+
+            $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new($pfx, $env:SIGN_PASSWORD)
+            [IO.File]::WriteAllBytes('publish\WinTweaker-signing.cer', $cert.Export('Cert'))
+            "SIGN_THUMB=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+            "SIGN_SUBJECT=$($cert.GetNameInfo('SimpleName', $false))" >> $env:GITHUB_ENV
+
+            $sig = Get-AuthenticodeSignature publish\WinTweaker.exe
+            if (-not $sig.SignerCertificate -or $sig.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw 'Подпись в exe не найдена' }
+            "Подписано: $($sig.SignerCertificate.Subject), отпечаток $($cert.Thumbprint), метка времени: $([bool]$sig.TimeStamperCertificate)"
+          }
+          finally { Remove-Item $pfx -Force -ErrorAction SilentlyContinue }
+
       - name: Checksum
         shell: pwsh
         run: |
@@ -83,6 +117,8 @@ jobs:
           path: |
             publish/WinTweaker.exe
             publish/WinTweaker.exe.sha256
+            publish/WinTweaker-signing.cer
+          if-no-files-found: warn
 
       - name: Release notes
         if: env.TAG != ''
@@ -119,6 +155,15 @@ jobs:
           ``````
           Файл собран автоматически в [GitHub Actions](https://github.com/$repo/actions/runs/${{ github.run_id }}) из кода этого релиза.
           "@
+          if ($env:SIGN_THUMB) {
+            $text += "`n" + @"
+
+          ### Цифровая подпись
+          Exe подписан автором: **$env:SIGN_SUBJECT**, отпечаток сертификата ``$env:SIGN_THUMB``.
+          Проверить: правый клик по файлу → **Свойства** → **Цифровые подписи** → **Сведения** → **Просмотр сертификата** → **Состав** → **Отпечаток**.
+          Подпись самоподписанная: она подтверждает, что файл выпущен автором и не изменён после сборки, но Windows всё равно покажет «Неизвестный издатель».
+          "@
+          }
           if ($notes) { $text = "## Что нового`n`n$notes`n`n$text" }
           Set-Content release-notes.md $text -Encoding utf8
           Get-Content release-notes.md
@@ -131,6 +176,7 @@ jobs:
           files: |
             publish/WinTweaker.exe
             publish/WinTweaker.exe.sha256
+            publish/WinTweaker-signing.cer
           body_path: release-notes.md
           # релиз, созданный на сайте: его описание сохраняется, наше добавляется ниже
           append_body: true
