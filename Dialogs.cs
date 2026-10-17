@@ -105,7 +105,7 @@ class Dialog : RoundForm
         {
             var no = new FlatBtn("", cancel);
             no.Click += (_, _) => Finish(DialogResult.Cancel);
-            no.Location = new Point(okBtn.Left - no.Width - 8, okBtn.Top);
+            no.Location = new Point(okBtn.Left + okBtn.Pad - no.Width - 8, okBtn.Top + okBtn.Pad);
             Controls.Add(no);
         }
 
@@ -332,7 +332,7 @@ class AccentDots : Control
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
-        g.Clear(Theme.BgOf(this));
+        Glass.Back(g, this);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         for (int i = 0; i < grow.Length; i++)
         {
@@ -349,4 +349,89 @@ class AccentDots : Control
     }
 
     public static string NameOf(int i) => Theme.Accents[i].Name;
+}
+
+/// <summary>«Что именно меняется»: моноширинный текст с ключами реестра и командами, кнопка «Копировать».</summary>
+class DetailsDialog : RoundForm
+{
+    readonly string title, sub;
+    int baseTop;
+    bool closing;
+
+    DetailsDialog(string title, string sub, string text)
+    {
+        this.title = title;
+        this.sub = sub;
+        StartPosition = FormStartPosition.Manual;
+        KeyPreview = true;
+        Opacity = 0;
+
+        var lines = text.Split('\n');
+        int h = Math.Clamp(lines.Length * 18 + 24, 90, 380);
+        Size = new Size(640, 92 + h + 72);
+
+        var box = new TextBox
+        {
+            Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None, WordWrap = true,
+            BackColor = Color.FromArgb(16, 17, 24), ForeColor = Color.FromArgb(200, 220, 255), Font = Theme.Mono,
+            Text = text.Replace("\r\n", "\n").Replace("\n", "\r\n"),
+            ScrollBars = lines.Length * 18 + 24 > 380 ? ScrollBars.Vertical : ScrollBars.None
+        };
+        box.SetBounds(36, 92 + 12, Width - 72, h - 24);
+        Controls.Add(box);
+
+        var close = new FlatBtn("", "Понятно") { Primary = true };
+        close.Location = new Point(Width - 24 - close.Width + close.Pad, Height - 22 - close.Height + close.Pad);
+        close.Click += (_, _) => Finish();
+        Controls.Add(close);
+
+        var copy = new FlatBtn("", "Копировать");
+        copy.Location = new Point(close.Left + close.Pad - copy.Width - 8, close.Top + close.Pad);
+        copy.Click += (_, _) =>
+        {
+            try { Clipboard.SetText(text); } catch { }
+            if (Owner != null) Toast.Pop(Owner, "Скопировано в буфер обмена", Tone.Info);
+        };
+        Controls.Add(copy);
+
+        KeyDown += (_, e) => { if (e.KeyCode is Keys.Escape or Keys.Enter) Finish(); };
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        if (Owner != null)
+            Location = new Point(Owner.Left + (Owner.Width - Width) / 2, Owner.Top + (Owner.Height - Height) / 2);
+        baseTop = Top;
+        Motion.Run(240, p => { Opacity = p; Top = baseTop + (int)Math.Round(12 * (1 - p)); });
+    }
+
+    void Finish()
+    {
+        if (closing) return;
+        closing = true;
+        Motion.Run(140, p => Opacity = 1 - p, Motion.InOut, 0, Close);
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var icon = new RectangleF(24, 24, 36, 36);
+        Theme.Fill(g, Theme.Lerp(Theme.Card, Theme.Accent, 0.2), icon, 18);
+        TextRenderer.DrawText(g, "", Theme.Icon, Rectangle.Round(icon), Theme.Accent, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        TextRenderer.DrawText(g, title, Theme.F(12f, FontStyle.Bold), new Rectangle(72, 22, Width - 96, 24), Theme.Text, TextFormatFlags.EndEllipsis);
+        TextRenderer.DrawText(g, sub, Theme.Tiny, new Rectangle(72, 46, Width - 96, 20), Theme.Muted, TextFormatFlags.EndEllipsis);
+        var code = new RectangleF(24, 92, Width - 48, Height - 92 - 72);
+        Theme.Fill(g, Color.FromArgb(16, 17, 24), code, 10);
+        using var pen = new Pen(Theme.Line);
+        using var path = Theme.Round(code, 10);
+        g.DrawPath(pen, path);
+    }
+
+    public static void Show(IWin32Window owner, string title, string sub, string text)
+    {
+        using var d = new DetailsDialog(title, sub, text);
+        d.ShowDialog(owner);
+    }
 }

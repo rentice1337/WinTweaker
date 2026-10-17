@@ -152,6 +152,7 @@ public static class Catalog
         t.Add(new Tweak
         {
             Category = C, Name = "Схема питания «Высокая производительность»",
+            Details = "Применить:\n  powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c\n  (если схемы нет — powercfg -duplicatescheme e9a42b02-… из «Максимальной производительности»)\n\nОтменить: вернуть схему, активную до применения (запоминается в журнале).",
             Description = "Процессор не снижает частоту. Если схемы нет (ноутбуки с Modern Standby), она создаётся из шаблона «Максимальная производительность». На батарее садится быстрее.",
             IsApplied = () => Shell.Run("powercfg", "/getactivescheme").Contains(HP, StringComparison.OrdinalIgnoreCase),
             Apply = () =>
@@ -168,6 +169,7 @@ public static class Catalog
         t.Add(new Tweak
         {
             Category = C, Name = "Отключить гибернацию",
+            Details = "Применить: powercfg /hibernate off  — удаляет C:\\hiberfil.sys\nОтменить: powercfg /hibernate on",
             Description = "Удаляет hiberfil.sys (освобождает место размером ~40% ОЗУ). Заодно отключает быстрый запуск.",
             IsApplied = () => Equals(Reg.Get(@"HKLM\SYSTEM\CurrentControlSet\Control\Power", "HibernateEnabled"), 0),
             Apply = () => Shell.Run("powercfg", "/hibernate off"),
@@ -188,6 +190,7 @@ public static class Catalog
         t.Add(new Tweak
         {
             Category = C, Name = "Визуальные эффекты: быстродействие",
+            Details = "[HKCU\\...\\Explorer\\VisualEffects]\n  VisualFXSetting = 3 (особые)\n[HKCU\\Control Panel\\Desktop]\n  UserPreferencesMask = 90 12 03 80 10 00 00 00\n  FontSmoothing = \"2\"\n\nОтменить: VisualFXSetting = 0, маска по умолчанию.",
             Description = "Отключает тени, анимации и плавное перетаскивание, оставляя сглаживание шрифтов и эскизы." + Relogin,
             IsApplied = () => Equals(Reg.Get(VE, "VisualFXSetting"), 3) && Reg.Get(@"HKCU\Control Panel\Desktop", "UserPreferencesMask") is byte[] m && m.SequenceEqual(fxBest),
             Apply = () =>
@@ -217,6 +220,7 @@ public static class Catalog
         t.Add(new Tweak
         {
             Category = C, Name = "Отключить SMBv1",
+            Details = "PowerShell:\n  Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -NoRestart\nОтменить:\n  Enable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -All -NoRestart",
             Description = "Устаревший протокол, через который распространялся WannaCry. Нужен только очень старым NAS и принтерам.",
             NeedsRestart = true,
             IsApplied = () => Shell.PS("(Get-WindowsOptionalFeature -Online -FeatureName SMB1Protocol).State").Trim() is "Disabled" or "DisablePending",
@@ -226,6 +230,7 @@ public static class Catalog
         t.Add(new Tweak
         {
             Category = C, Name = "Защита от нежелательных программ (PUA)",
+            Details = "PowerShell:\n  Set-MpPreference -PUAProtection Enabled\nОтменить:\n  Set-MpPreference -PUAProtection Disabled",
             Description = "Microsoft Defender начнёт блокировать «рекламное» ПО: тулбары, майнеры и установщики с довеском. Не работает, если стоит другой антивирус.",
             IsApplied = () => Shell.PS("(Get-MpPreference).PUAProtection").Trim() == "1",
             Apply = () => Shell.PS("Set-MpPreference -PUAProtection Enabled"),
@@ -242,6 +247,7 @@ public static class Catalog
         t.Add(new Tweak
         {
             Category = C, Name = "Папка «Все настройки» (God Mode) на рабочем столе",
+            Details = "Создаёт на рабочем столе папку\n  GodMode.{ED7BA470-8E54-465E-825C-99712043E01C}\nОтменить — удалить папку.",
             Description = "Папка со всеми ~200 настройками панели управления в одном списке.",
             IsApplied = () => Directory.Exists(GodModePath),
             Apply = () => Directory.CreateDirectory(GodModePath),
@@ -378,6 +384,17 @@ public static class Catalog
             }));
         t.Add(Act(C, "Восстановление", "Перезапустить Проводник", "Помогает, если зависла панель задач или не применились настройки интерфейса.",
             RestartExplorer));
+        t.Add(new Tweak
+        {
+            Category = C, Group = "WinTweaker", Name = "Сторож настроек при входе в Windows",
+            Description = "При каждом входе в систему WinTweaker тихо проверяет, не откатила ли Windows ваши настройки (обычно после крупных обновлений), " +
+                          "и показывает уведомление — по клику всё возвращается. Сторож запускается по пути, где лежит exe: если переместите файл, включите заново.",
+            Details = $"Задание планировщика «{Watch.TaskName}»:\n  schtasks /Create /TN \"{Watch.TaskName}\" /SC ONLOGON /RL HIGHEST /DELAY 0001:00\n" +
+                      "           /TR \"<путь к WinTweaker.exe> --watch\"\nОтменить:\n  schtasks /Delete /TN \"" + Watch.TaskName + "\" /F",
+            IsApplied = Watch.Installed,
+            Apply = Watch.Install,
+            Revert = Watch.Uninstall
+        });
         t.Add(Act(C, "Программы", "Обновить все программы (winget)",
             "winget upgrade --all: тихо обновляет установленные программы. Нужен «Установщик приложений» из Microsoft Store.",
             () => Shell.Run("cmd.exe", "/c winget upgrade --all --silent --accept-package-agreements --accept-source-agreements")));
@@ -411,6 +428,7 @@ public static class Catalog
         params (string key, string val, object on, object? off)[] items) => new()
     {
         Category = cat, Name = name, Description = desc.TrimStart('\n'), Risky = risky, NeedsRestart = restart,
+        Details = RegDetails(items),
         IsApplied = () => items.All(i => Reg.Get(i.key, i.val)?.ToString() == i.on.ToString()),
         Apply = () => { foreach (var i in items) Reg.Set(i.key, i.val, i.on); },
         Revert = () =>
@@ -420,12 +438,38 @@ public static class Catalog
         }
     };
 
+    /// <summary>Текст «что меняется» для настроек из параметров реестра.</summary>
+    static string RegDetails((string key, string val, object on, object? off)[] items)
+    {
+        static string Fmt(object v) => v switch
+        {
+            string str => $"\"{str}\"  (REG_SZ)",
+            byte[] b => string.Join(" ", b.Select(x => x.ToString("X2"))) + "  (REG_BINARY)",
+            int i => $"{i}  (REG_DWORD, 0x{i:X})",
+            _ => v.ToString() ?? ""
+        };
+        var sb = new System.Text.StringBuilder("Применить:\n");
+        foreach (var g in items.GroupBy(i => i.key))
+        {
+            sb.Append("  [").Append(g.Key).Append("]\n");
+            foreach (var i in g) sb.Append("    ").Append(i.val).Append(" = ").Append(Fmt(i.on)).Append('\n');
+        }
+        sb.Append("\nОтменить:\n");
+        foreach (var i in items)
+            sb.Append("    ").Append(i.val).Append(i.off == null ? " → удалить параметр (поведение по умолчанию)" : " = " + Fmt(i.off)).Append('\n');
+        sb.Append("\nПри откате из «Истории» возвращаются точные прежние значения.");
+        return sb.ToString();
+    }
+
     static string SvcKey(string s) => @"HKLM\SYSTEM\CurrentControlSet\Services\" + s;
 
     /// <summary>Отключение служб через диспетчер служб (sc config), а не прямой правкой реестра.</summary>
     static Tweak S(string name, string desc, string startMode, bool risky, params string[] services) => new()
     {
         Category = "Службы", Name = "Отключить: " + name, Risky = risky,
+        Details = "Применить:\n" + string.Join("\n", services.Select(s => $"  sc stop {s}\n  sc config {s} start= disabled")) +
+                  "\n\nОтменить:\n" + string.Join("\n", services.Select(s => $"  sc config {s} start= <прежний тип запуска>")) +
+                  "\n\nПрежний тип запуска запоминается в журнале и возвращается при откате.",
         Description = (desc == "" ? "" : desc + "\n\n") + "Службы: " + string.Join(", ", services) + ".",
         IsApplied = () => services.Where(s => Reg.KeyExists(SvcKey(s))).All(s => Equals(Reg.Get(SvcKey(s), "Start"), 4)),
         // снимок: служба=Start,DelayedAutostart — откат вернёт ровно прежний тип запуска
@@ -471,6 +515,9 @@ public static class Catalog
     static Tweak A(string name, string package) => new()
     {
         Category = "Приложения", Group = "Удаление встроенных приложений", Name = name,
+        Details = $"PowerShell:\n  Get-AppxPackage -AllUsers '*{package}*' | Remove-AppxPackage -AllUsers\n" +
+                  $"  Get-AppxProvisionedPackage -Online | Where DisplayName -like '*{package}*' | Remove-AppxProvisionedPackage -Online\n\n" +
+                  "Отменить программой нельзя — приложение возвращается через Microsoft Store.",
         Description = $"Удаляет {package} у всех пользователей и из образа для новых пользователей. Вернуть можно из Microsoft Store.",
         IsApplied = () => !AppxCache.Has(package),
         Apply = () =>
@@ -482,15 +529,17 @@ public static class Catalog
         Revert = null
     };
 
-    public static Tweak Act(string cat, string? group, string name, string desc, Action run, bool risky = false) => new()
+    public static Tweak Act(string cat, string? group, string name, string desc, Action run, bool risky = false, string? details = null) => new()
     {
         Category = cat, Group = group, Name = name, Description = desc, Risky = risky, IsAction = true,
+        Details = details ?? "Разовое действие, переключателя нет.\n\n" + desc,
         IsApplied = () => false, Apply = run
     };
 
     static Tweak KeyRemove(string cat, string name, string desc, params string[] keys) => new()
     {
         Category = cat, Name = name, Description = desc,
+        Details = "Применить — удалить разделы реестра:\n" + string.Join("\n", keys.Select(k => "  " + k)) + "\n\nОтменить — создать их снова.",
         IsApplied = () => keys.All(k => !Reg.KeyExists(k)),
         Apply = () => { foreach (var k in keys) Reg.DeleteKey(k); },
         Revert = () => { foreach (var k in keys) Reg.CreateKey(k); }

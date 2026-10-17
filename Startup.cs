@@ -72,6 +72,8 @@ static class StartupManager
     {
         string key = Approved + approvedSub;
         return Entry(name, exe, group, $"{source}\n\nКоманда: {command}",
+            details: $"Как в диспетчере задач — запись не удаляется, а помечается:\n  [{(hive == Registry.CurrentUser ? "HKCU" : "HKLM")}\\{key}]\n" +
+                     $"    {valueName} = 02 00 00 … (включено) / 03 00 00 … (выключено)",
             isOn: () => IsEnabled(hive, key, valueName),
             on: () => SetEnabled(hive, key, valueName, true),
             off: () => SetEnabled(hive, key, valueName, false));
@@ -101,7 +103,7 @@ static class StartupManager
     static IEnumerable<Tweak> Tasks()
     {
         const string ps =
-            "Get-ScheduledTask | Where-Object { $_.TaskPath -notlike '\\Microsoft\\*' -and " +
+            "Get-ScheduledTask | Where-Object { $_.TaskPath -notlike '\\Microsoft\\*' -and $_.TaskPath -notlike '\\WinTweaker\\*' -and " +
             "@($_.Triggers | Where-Object { $_.CimClass.CimClassName -in 'MSFT_TaskLogonTrigger','MSFT_TaskBootTrigger' }).Count -gt 0 } | " +
             "ForEach-Object { $a = @($_.Actions)[0]; $_.TaskPath + '|' + $_.TaskName + '|' + $_.State + '|' + $a.Execute + '|' + $a.Arguments }";
 
@@ -116,6 +118,7 @@ static class StartupManager
 
             yield return Entry(name, exe, "Планировщик заданий",
                 $"Задание: {path}{name}\nЗапускается при входе в систему или загрузке.\n\nКоманда: {exe} {args}".TrimEnd(),
+                details: $"PowerShell:\n  Disable-ScheduledTask {target}\nОтменить:\n  Enable-ScheduledTask {target}",
                 isOn: () => state != "Disabled",
                 on: () => Shell.PS($"Enable-ScheduledTask {target} | Out-Null"),
                 off: () => Shell.PS($"Disable-ScheduledTask {target} | Out-Null"));
@@ -126,12 +129,13 @@ static class StartupManager
 
     // ───────── Общее ─────────
 
-    static Tweak Entry(string name, string? exe, string group, string desc, Func<bool> isOn, Action on, Action off)
+    static Tweak Entry(string name, string? exe, string group, string desc, Func<bool> isOn, Action on, Action off, string? details = null)
     {
         bool exists = exe != null && File.Exists(exe);
         return new Tweak
         {
             Category = Cat, Group = group, Name = name, Description = desc,
+            Details = details,
             Subtitle = exists ? Publisher(exe!) : null,
             Icon = exists ? IconOf(exe!) : null,
             OpenFolder = exists ? () => Process.Start("explorer.exe", $"/select,\"{exe}\"") : null,
