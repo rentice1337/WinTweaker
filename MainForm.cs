@@ -76,8 +76,13 @@ public partial class MainForm : Form
     string selected = Home;
     bool busy, closing, loaded, hwDetected;
 
-    public MainForm()
+    readonly bool startHidden;
+    Tray? tray;
+    bool exiting, trayHintShown;
+
+    public MainForm(bool startHidden = false)
     {
+        this.startHidden = startHidden;
         Text = "WinTweaker";
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterScreen;
@@ -105,6 +110,9 @@ public partial class MainForm : Form
         cursorTimer.Tick += (_, _) => { if (WindowState != FormWindowState.Minimized) Spotlight.Move(Cursor.Position); };
         ShowSkeleton();
 
+        Sampler.Start();
+        tray = new Tray(this);
+        Widgets.Init();
         Load += (_, _) => Glass.Attach(this);
         Shown += async (_, _) =>
         {
@@ -148,9 +156,74 @@ public partial class MainForm : Form
 
     void FadeClose()
     {
+        if (AppSettings.Get("tray", "1") == "1") HideToTray();
+        else ExitApp();
+    }
+
+    // ───────── Трей ─────────
+
+    /// <summary>Запуск с --tray: окно создаётся, но не показывается, пока не откроют из трея.</summary>
+    protected override void SetVisibleCore(bool value)
+    {
+        if (startHidden && !IsHandleCreated)
+        {
+            CreateHandle();
+            value = false;
+        }
+        base.SetVisibleCore(value);
+    }
+
+    void HideToTray()
+    {
+        liveTimer.Stop();
+        Hide();
+        if (!trayHintShown && AppSettings.Get("trayHint", "0") == "0")
+        {
+            trayHintShown = true;
+            AppSettings.Set("trayHint", "1");
+            tray?.Balloon("WinTweak работает в трее", "Значок с процентом памяти — здесь. Выход — в панели по клику на значок.");
+        }
+    }
+
+    public void ShowFromTray()
+    {
+        if (exiting) return;
+        Show();
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Activate();
+        BringToFront();
+        if (selected == Home && loaded) liveTimer.Start();
+    }
+
+    public void ExitApp()
+    {
+        if (exiting) return;
+        exiting = true;
+        tray?.Dispose();
+        tray = null;
+        Widgets.CloseAll();
+        if (!Visible) { Close(); Application.Exit(); return; }
         if (closing) return;
         closing = true;
-        Motion.Run(180, p => Opacity = 1 - p, Motion.InOut, 0, Close);
+        Motion.Run(180, p => Opacity = 1 - p, Motion.InOut, 0, () => { Close(); Application.Exit(); });
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        // Alt+F4 и закрытие с панели задач тоже сворачивают в трей; выход — из трея
+        if (!exiting && e.CloseReason == CloseReason.UserClosing && AppSettings.Get("tray", "1") == "1")
+        {
+            e.Cancel = true;
+            HideToTray();
+            return;
+        }
+        if (!exiting)
+        {
+            exiting = true;
+            tray?.Dispose();
+            Widgets.CloseAll();
+        }
+        base.OnFormClosing(e);
     }
 
     // ───────── Каркас окна ─────────
@@ -468,7 +541,6 @@ public partial class MainForm : Form
         pal.Click += (_, _) => OpenPalette();
         cv.Controls.Add(new ActionsWidget("Быстрые действия", clean, restore, explorer, diag, code, pal));
 
-        SysInfo.Cpu(); // первый замер — точка отсчёта
         LiveTick();
         liveTimer.Start();
     }
@@ -520,9 +592,8 @@ public partial class MainForm : Form
     void LiveTick()
     {
         var live = view.Canvas.Controls.OfType<LiveWidget>().FirstOrDefault();
-        if (live == null) { liveTimer.Stop(); return; }
-        var m = SysInfo.Memory();
-        live.Push(SysInfo.Cpu(), m.Load, $"{m.UsedGb:0.0} из {m.TotalGb:0.0} ГБ");
+        if (live == null || !Visible) { liveTimer.Stop(); return; }
+        live.Push(Sampler.Cpu, Sampler.Ram, $"{Sampler.RamUsedGb:0.0} из {Sampler.RamTotalGb:0.0} ГБ");
     }
 
     // ───────── Диагностика ─────────
@@ -984,6 +1055,7 @@ public partial class MainForm : Form
             Programs.Installed.Reset();
             if (detect) Hardware.Detect();
             try { watchOn = Watch.Installed(); } catch { }
+            try { autostartOn = Autostart.Installed(); } catch { }
             try { startup = StartupManager.Load(); } catch { }
             foreach (var t in tweaks.Where(t => t.Category != StartupManager.Cat).Concat(startup))
             {
