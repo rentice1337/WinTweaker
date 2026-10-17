@@ -19,6 +19,8 @@ public partial class MainForm
         var picker = new AccentPicker(Array.FindIndex(Theme.Accents, a => a.Color == Theme.Accent));
         picker.Picked += ChangeAccent;
         look.AddCustom("Цвет акцента", "Кнопки, переключатели, свечение и логотип", picker);
+        look.Add("Лёгкий интерфейс", "Без стекла, подсветки и анимаций — окно летает на слабых ПК и больших мониторах. Включается сам, если интерфейс тормозит",
+            () => UiMode.Lite, on => { UiMode.Set(on, byUser: true); ApplyUiMode(); });
         look.Add("Стекло", "Размытые обои рабочего стола под окном (нужны «Эффекты прозрачности» Windows)",
             () => AppSettings.Get("glass", "1") == "1", on =>
             {
@@ -28,14 +30,14 @@ public partial class MainForm
                 if (on && !Glass.WallpaperOn) Toast.Pop(this, "В Windows выключены «Эффекты прозрачности» — обои под окном не показываются", Tone.Info);
             });
         look.Add("Подсветка под курсором", "Рамки карточек подсвечиваются акцентом рядом с курсором",
-            () => Spotlight.Enabled, on => { Spotlight.Enabled = on; AppSettings.Set("spot", on ? "1" : "0"); Invalidate(true); });
+            () => AppSettings.Get("spot", "1") == "1", on => { AppSettings.Set("spot", on ? "1" : "0"); ApplyUiMode(rebuild: false); });
         look.Add("Анимации", "Плавные переходы и появление карточек. Выключите на слабом ПК",
-            () => !Motion.UserOff, on => { Motion.UserOff = !on; AppSettings.Set("anim", on ? "1" : "0"); });
+            () => AppSettings.Get("anim", "1") == "1", on => { AppSettings.Set("anim", on ? "1" : "0"); ApplyUiMode(rebuild: false); });
         cv.Controls.Add(look);
 
         // ── Применение ──
         var apply = new OptionsCard("Применение");
-        apply.Add("Точка восстановления", "Создавать перед каждым «Применить» (то же, что переключатель сверху)",
+        apply.Add("Точка восстановления", "Перед рискованными изменениями: «для опытных», службы, удаление приложений (то же, что переключатель сверху)",
             () => restoreToggle.Checked, on => { restoreToggle.Checked = on; AppSettings.Set("restore", on ? "1" : "0"); });
         apply.Add("Предлагать перезапуск Проводника", "После изменений панели задач, меню и Проводника",
             () => AppSettings.Get("askExplorer", "1") == "1", on => AppSettings.Set("askExplorer", on ? "1" : "0"));
@@ -90,10 +92,25 @@ public partial class MainForm
 
     bool watchOn, autostartOn;
 
+    /// <summary>Эффекты с учётом лёгкого интерфейса: он отключает стекло, подсветку и анимации, не трогая их собственные настройки.</summary>
+    void ApplyUiMode(bool rebuild = true)
+    {
+        Motion.UserOff = UiMode.Lite || AppSettings.Get("anim", "1") == "0";
+        Spotlight.Enabled = !UiMode.Lite && AppSettings.Get("spot", "1") == "1";
+        if (rebuild) Glass.Rebuild();
+        Invalidate(true);
+    }
+
     void ApplyAppSettings()
     {
-        Motion.UserOff = AppSettings.Get("anim", "1") == "0";
-        Spotlight.Enabled = AppSettings.Get("spot", "1") == "1";
+        ApplyUiMode(rebuild: false);
+        Motion.Slow += fps =>
+        {
+            if (!UiMode.AutoAllowed || IsDisposed) return;
+            UiMode.Set(true, byUser: false);
+            ApplyUiMode();
+            Toast.Pop(this, $"Окно шло рывками (~{fps} кадров/с) — включён лёгкий интерфейс. Вернуть эффекты: «Настройки» → «Оформление»", Tone.Info);
+        };
         restoreToggle.Checked = AppSettings.Get("restore", "1") == "1";
         restoreToggle.CheckedChanged += (_, _) => AppSettings.Set("restore", restoreToggle.Checked ? "1" : "0");
     }

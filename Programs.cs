@@ -55,7 +55,6 @@ static class Programs
         new("Разработка", "Node.js LTS", "OpenJS.NodeJS.LTS", "Node.js", "JavaScript вне браузера."),
 
         new("Компоненты", ".NET Desktop Runtime 8", "Microsoft.DotNet.DesktopRuntime.8", "Microsoft Windows Desktop Runtime - 8", "Нужен многим программам на .NET."),
-        new("Компоненты", "Visual C++ 2015–2022 (x64)", "Microsoft.VCRedist.2015+.x64", "Microsoft Visual C++ 2015-20", "Библиотеки, без которых не запускаются многие игры."),
     };
 
     public static IEnumerable<Tweak> All() => Apps.Select(a => new Tweak
@@ -67,7 +66,50 @@ static class Programs
         IsApplied = () => Installed.Has(a.Match),
         Apply = () => Winget($"install --id {a.Id} -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity", a.Name),
         Revert = () => Winget($"uninstall --id {a.Id} -e --silent --accept-source-agreements --disable-interactivity", a.Name)
-    });
+    }).Append(VcRedist());
+
+    // ───── Visual C++ всех версий ─────
+
+    static readonly (string Year, string Arch)[] Vc =
+        new[] { "2005", "2008", "2010", "2012", "2013", "2015+" }.SelectMany(y => new[] { (y, "x86"), (y, "x64") }).ToArray();
+
+    static string VcId((string Year, string Arch) v) => $"Microsoft.VCRedist.{v.Year}.{v.Arch}";
+
+    /// <summary>Установлена ли версия: по названию в «Программы и компоненты» (у 2005 x86 в названии нет «x86»).</summary>
+    static bool VcInstalled((string Year, string Arch) v)
+    {
+        var years = v.Year == "2015+" ? new[] { "2015", "2017", "2019", "2022" } : new[] { v.Year };
+        return Installed.Names.Any(n =>
+            n.StartsWith("Microsoft Visual C++ ", StringComparison.OrdinalIgnoreCase) &&
+            n.Contains("Redistributable", StringComparison.OrdinalIgnoreCase) &&
+            years.Any(y => n.Contains(y)) &&
+            (n.Contains(v.Arch, StringComparison.OrdinalIgnoreCase) ||
+             v.Year == "2005" && v.Arch == "x86" && !n.Contains("x64", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    static Tweak VcRedist() => new()
+    {
+        Category = Cat, Group = "Компоненты", Name = "Visual C++ 2005–2022 — все версии",
+        Description = "Библиотеки Microsoft Visual C++ всех версий, x86 и x64 — без них не запускаются многие игры и программы. " +
+                      "То же, что сборники «All in One», но официальные пакеты напрямую от Microsoft.\n\n" +
+                      "Включить — поставить недостающие версии (установленные пропускаются). Выключение ничего не удаляет: эти библиотеки нужны другим программам.",
+        Details = "Через winget, только недостающие:\n" + string.Join("\n", Vc.Select(v => "  winget install --id " + VcId(v) + " -e --silent")) +
+                  "\n\nНужен «Установщик приложений» (App Installer) из Microsoft Store.",
+        IsApplied = () => Vc.All(VcInstalled),
+        Apply = () =>
+        {
+            var failed = new List<string>();
+            foreach (var v in Vc.Where(v => !VcInstalled(v)))
+            {
+                int code = Shell.RunCode("cmd.exe", $"/c winget install --id {VcId(v)} -e --silent --accept-package-agreements --accept-source-agreements --disable-interactivity");
+                if (code == 9009) throw new InvalidOperationException("winget не найден — установите «Установщик приложений» из Microsoft Store.");
+                // 0x8A15002B — уже стоит последняя версия
+                if (code != 0 && (uint)code != 0x8A15002B) failed.Add($"{v.Year} {v.Arch} (0x{code:X8})");
+            }
+            Installed.Reset();
+            if (failed.Count > 0) throw new InvalidOperationException("Не установились: " + string.Join(", ", failed));
+        },
+    };
 
     static void Winget(string args, string name)
     {
@@ -85,6 +127,8 @@ static class Programs
         static List<string>? names;
 
         public static void Reset() => names = null;
+
+        public static IReadOnlyList<string> Names => names ??= Load();
 
         public static bool Has(string prefix)
         {

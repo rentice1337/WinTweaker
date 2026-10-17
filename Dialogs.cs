@@ -105,6 +105,42 @@ abstract class RoundForm : Form
         WinCorners.Apply(this, Theme.Line);
     }
 
+    // ───── справочные окна закрываются кликом в любом месте вне окна ─────
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
+
+    /// <summary>Справочное окно: клик мышью в любом месте экрана вне окна закрывает его (как «Понятно»).</summary>
+    protected bool CloseOnClickOutside { get; set; }
+    System.Windows.Forms.Timer? outside;
+    bool wasDown = true; // кнопка могла быть ещё нажата после клика, открывшего окно
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        if (!CloseOnClickOutside) return;
+        outside = new System.Windows.Forms.Timer { Interval = 30 };
+        outside.Tick += (_, _) =>
+        {
+            bool down = (GetAsyncKeyState(0x01) & 0x8000) != 0 || (GetAsyncKeyState(0x02) & 0x8000) != 0;
+            if (down && !wasDown && !Bounds.Contains(Cursor.Position))
+            {
+                outside.Stop();
+                ClickedOutside();
+            }
+            wasDown = down;
+        };
+        outside.Start();
+    }
+
+    /// <summary>Что сделать при клике вне окна (по умолчанию — закрыть).</summary>
+    protected virtual void ClickedOutside() => Close();
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        outside?.Dispose();
+        base.OnFormClosed(e);
+    }
+
     protected override void OnPaintBackground(PaintEventArgs e)
     {
         e.Graphics.Clear(Theme.Card);
@@ -136,6 +172,7 @@ class Dialog : RoundForm
         var textSize = TextRenderer.MeasureText(message, Theme.Body, new Size(w - pad * 2 - 44, 0), TextFormatFlags.WordBreak);
         Size = new Size(w, Math.Max(150, 70 + textSize.Height + 76));
 
+        CloseOnClickOutside = cancel == null; // сообщение без выбора — справочное
         var okBtn = new FlatBtn("\uE73E", ok) { Primary = true };
         okBtn.Click += (_, _) => Finish(DialogResult.OK);
         okBtn.Location = new Point(Width - pad - okBtn.Width, Height - pad - okBtn.Height);
@@ -182,6 +219,8 @@ class Dialog : RoundForm
     }
 
     bool closing;
+
+    protected override void ClickedOutside() => Finish(DialogResult.OK);
 
     void Finish(DialogResult r)
     {
@@ -406,6 +445,7 @@ class DetailsDialog : RoundForm
         KeyPreview = true;
         Opacity = 0;
 
+        CloseOnClickOutside = true; // справочное окно — закрывается кликом мимо
         var lines = text.Split('\n');
         int h = Math.Clamp(lines.Length * 18 + 24, 90, 380);
         Size = new Size(640, 92 + h + 72);
@@ -445,6 +485,8 @@ class DetailsDialog : RoundForm
         baseTop = Top;
         Motion.Run(240, p => { Opacity = p; Top = baseTop + (int)Math.Round(12 * (1 - p)); });
     }
+
+    protected override void ClickedOutside() => Finish();
 
     void Finish()
     {

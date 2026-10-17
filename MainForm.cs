@@ -142,6 +142,7 @@ public partial class MainForm : Form
             cursorTimer.Start();
             await LoadStateAsync();
             await FirstRunAsync();
+            await OfferRetiredDns();
             if (!GameLibrary.Scanned) _ = GameLibrary.ScanAsync(); // для автоопределения игр
             if (AppSettings.Get("updates", "1") == "1") _ = CheckUpdates(manual: false);
         };
@@ -311,7 +312,7 @@ public partial class MainForm : Form
         refresh.Click += async (_, _) => { if (!busy) await LoadStateAsync(); };
         tip.SetToolTip(apply, "Применить отмеченные изменения (Ctrl+Enter)");
         tip.SetToolTip(refresh, "Перепроверить состояние системы (F5)");
-        tip.SetToolTip(restoreToggle, "Создавать точку восстановления Windows перед применением изменений.\nТребует включённой защиты системы на диске C:.");
+        tip.SetToolTip(restoreToggle, "Создавать точку восстановления Windows перед рискованными изменениями:\n«для опытных», службы, удаление приложений. Остальное откатывается из «Истории».\nТребует включённой защиты системы на диске C:.");
         tip.SetToolTip(trigger, "Палитра команд — найти и переключить любую настройку (Ctrl+K)");
 
 
@@ -881,6 +882,13 @@ public partial class MainForm : Form
             tip.SetToolTip(r.Toggle, desc);
             r.Toggle.CheckedChanged += (_, _) =>
             {
+                // настройку без отката (например, Visual C++) выключить нельзя — возвращаем переключатель
+                if (!r.Toggle.Checked && t.Revert == null && current.GetValueOrDefault(t))
+                {
+                    r.Toggle.Checked = true;
+                    Toast.Pop(this, $"«{t.Name}» не выключается — это можно только включить", Tone.Info);
+                    return;
+                }
                 desired[t] = r.Toggle.Checked;
                 r.Changed = desired[t] != current.GetValueOrDefault(t);
                 UpdatePending();
@@ -989,6 +997,11 @@ public partial class MainForm : Form
 
     void TogglePalette(Tweak t)
     {
+        if (desired.GetValueOrDefault(t) && t.Revert == null && current.GetValueOrDefault(t))
+        {
+            Toast.Pop(this, $"«{t.Name}» не выключается — это можно только включить", Tone.Info);
+            return;
+        }
         desired[t] = !desired.GetValueOrDefault(t);
         foreach (var r in Rows().Where(r => r.T == t && r.Toggle != null))
         {
@@ -1110,7 +1123,7 @@ public partial class MainForm : Form
     }
 
     int Pending() =>
-        tweaks.Count(t => t.IsToggle && desired.GetValueOrDefault(t) != current.GetValueOrDefault(t)) +
+        tweaks.Count(t => t.IsToggle && desired.GetValueOrDefault(t) != current.GetValueOrDefault(t) && (desired.GetValueOrDefault(t) || t.Revert != null)) +
         tweaks.Count(t => t.IsValue && desVal.GetValueOrDefault(t) != curVal.GetValueOrDefault(t));
 
     void UpdatePending()
@@ -1140,25 +1153,15 @@ public partial class MainForm : Form
             DnsCache.Reset();
             Programs.Installed.Reset();
             if (detect) Hardware.Detect();
-            try { watchOn = Watch.Installed(); } catch { }
-            try { autostartOn = Autostart.Installed(); } catch { }
-            try { startup = StartupManager.Load(); } catch { }
-            foreach (var t in tweaks.Where(t => t.Category != StartupManager.Cat).Concat(startup))
-            {
-                if (t.IsValue)
-                {
-                    int val = 0;
-                    try { val = t.Get!(); } catch { }
-                    curVal[t] = val;
-                    desVal[t] = val;
-                    continue;
-                }
-                bool v = false;
-                if (!t.IsAction)
-                    try { v = t.IsApplied(); } catch { }
-                current[t] = v;
-                desired[t] = v;
-            }
+            // медленные общие данные (PowerShell, планировщик) — одновременно, а не по очереди
+            Parallel.Invoke(
+                () => { try { AppxCache.Has("\u0000"); } catch { } },
+                () => { try { _ = DnsCache.Current; } catch { } },
+                () => { try { _ = Programs.Installed.Names; } catch { } },
+                () => { try { watchOn = Watch.Installed(); } catch { } },
+                () => { try { autostartOn = Autostart.Installed(); } catch { } },
+                () => { try { startup = StartupManager.Load(); } catch { } });
+            CheckState(tweaks.Where(t => t.Category != StartupManager.Cat).Concat(startup).ToList());
         });
         // список автозагрузки читается заново при каждой проверке
         foreach (var old in tweaks.Where(t => t.Category == StartupManager.Cat).ToList())
@@ -1174,6 +1177,58 @@ public partial class MainForm : Form
         Build();
         UpdatePending();
     }
+
+    /// <summary>
+    /// Прочитать текущее состояние настроек в несколько потоков: многие проверки ждут внешние команды
+    /// (powercfg, PowerShell), и по очереди они шли десятки секунд. Результаты записываются уже в одном потоке.
+    /// </summary>
+    void CheckState(List<Tweak> list)
+    {
+        var vals = new int[list.Count];
+        var flags = new bool[list.Count];
+        Parallel.For(0, list.Count, new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 2, 8) }, i =>
+        {
+            var t = list[i];
+            try
+            {
+                if (t.IsValue) vals[i] = t.Get!();
+                else if (!t.IsAction) flags[i] = t.IsApplied();
+            }
+            catch { }
+        });
+        for (int i = 0; i < list.Count; i++)
+        {
+            var t = list[i];
+            if (t.IsValue) { curVal[t] = vals[i]; desVal[t] = vals[i]; }
+            else { current[t] = flags[i]; desired[t] = flags[i]; }
+        }
+    }
+
+    /// <summary>После применения — перепроверить только разделы, где были изменения (а не все 170+ настроек).</summary>
+    async Task RefreshAfterApply(List<Tweak> changed)
+    {
+        if (changed.Any(t => t.Category == StartupManager.Cat)) { await LoadStateAsync(); return; }
+        var cats = changed.Select(t => t.Category).ToHashSet();
+        var list = tweaks.Where(t => cats.Contains(t.Category)).ToList();
+        await RunBusy("Проверка…", () =>
+        {
+            if (cats.Contains("Приложения")) AppxCache.Reset();
+            DnsCache.Reset();
+            Programs.Installed.Reset();
+            CheckState(list);
+            if (changed.Any(t => t.Name.StartsWith("Сторож"))) try { watchOn = Watch.Installed(); } catch { }
+        });
+        try { reverted = Watch.Reverted(tweaks, t => current.GetValueOrDefault(t)); } catch { reverted = new(); }
+        Build();
+        UpdatePending();
+    }
+
+    /// <summary>
+    /// Нужна ли точка восстановления: только если среди изменений есть то, что может навредить системе, —
+    /// «для опытных», службы, удаление приложений. Интерфейс и приватность откатываются из «Истории» и без неё.
+    /// </summary>
+    static bool NeedsRestorePoint(IEnumerable<Tweak> changes) =>
+        changes.Any(t => t.Risky || t.Category is "Службы" or "Приложения");
 
     async Task ApplyAsync()
     {
@@ -1203,7 +1258,7 @@ public partial class MainForm : Form
         if (total == 0) return;
 
         var errors = new List<string>();
-        bool makeRestore = restoreToggle.Checked;
+        bool makeRestore = restoreToggle.Checked && NeedsRestorePoint(changes.Concat(vchanges));
         bool restart = changes.Concat(vchanges).Any(t => t.NeedsRestart);
         await RunBusy("Применение…", () =>
         {
@@ -1236,7 +1291,7 @@ public partial class MainForm : Form
             try { Journal.Save(session); } catch (Exception ex) { errors.Add("Журнал отката: " + ex.Message); }
         });
 
-        await LoadStateAsync();
+        await RefreshAfterApply(changes.Concat(vchanges).ToList());
 
         if (errors.Count > 0)
             Dialog.Info(this, "Применено с ошибками", string.Join("\n", errors), Tone.Error);
@@ -1250,6 +1305,30 @@ public partial class MainForm : Form
                 "Так изменения панели задач и Проводника вступят в силу сразу. Открытые окна Проводника закроются.",
                 "Перезапустить", "Не сейчас"))
             Catalog.RestartExplorer();
+    }
+
+    /// <summary>
+    /// Если на компьютере остался DNS, убранный из списка как неработающий (Xbox DNS), — один раз предложить вернуть DNS провайдера.
+    /// </summary>
+    async Task OfferRetiredDns()
+    {
+        if (AppSettings.Get("retiredDns.asked", "") == "1") return;
+        string? name = null;
+        try { name = await Task.Run(RussiaNetwork.RetiredInUse); } catch { }
+        if (name == null || IsDisposed) return;
+        AppSettings.Set("retiredDns.asked", "1");
+        if (Dialog.Confirm(this, $"{name} больше не работает",
+                $"У вас включён {name}. В октябре 2026 он попал под блокировки, а его создатели сообщили о вероятном закрытии — " +
+                "из-за этого сайты и игры могут открываться с ошибками.\n\nВернуть DNS от провайдера? Другой DNS можно выбрать в «Сеть» → «Обход блокировок».",
+                "Вернуть DNS провайдера", "Выбрать другой"))
+        {
+            if (await RunBusy("Возвращаю DNS провайдера…", RussiaNetwork.ResetDns))
+            {
+                Toast.Pop(this, "DNS провайдера возвращён");
+                await LoadStateAsync();
+            }
+        }
+        else SelectCategory(RussiaNetwork.Page);
     }
 
     static void CreateRestorePoint()

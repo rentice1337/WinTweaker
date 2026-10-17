@@ -63,9 +63,37 @@ static class Motion
         return tw;
     }
 
+    // ───── замер кадров: если анимации стабильно идут рывками — событие Slow (включить лёгкий интерфейс) ─────
+
+    static double lastTick = -1;
+    static readonly List<double> gaps = new();
+    static int slowWindows;
+    static bool slowFired;
+
+    /// <summary>Интерфейс стабильно рисуется медленнее ~25 кадров/с; аргумент — замеренные кадры/с.</summary>
+    public static event Action<int>? Slow;
+
+    static void Measure(double now)
+    {
+        if (slowFired) return;
+        if (lastTick >= 0 && now - lastTick < 1000) gaps.Add(now - lastTick); // паузы между анимациями не считаем
+        lastTick = now;
+        if (gaps.Count < 45) return;
+        gaps.Sort();
+        double median = gaps[gaps.Count / 2]; // медиана — одна долгая перерисовка страницы не в счёт
+        gaps.Clear();
+        slowWindows = median > 40 ? slowWindows + 1 : 0;
+        if (slowWindows >= 2)
+        {
+            slowFired = true;
+            Slow?.Invoke((int)Math.Round(1000 / median));
+        }
+    }
+
     static void Tick()
     {
         double now = Now;
+        Measure(now);
         foreach (var tw in tweens.ToArray())
         {
             if (tw.Finished) { tweens.Remove(tw); continue; }
@@ -80,8 +108,22 @@ static class Motion
                 tw.Done?.Invoke();
             }
         }
-        if (tweens.Count == 0) timer.Stop();
+        if (tweens.Count == 0) { timer.Stop(); lastTick = -1; }
     }
+}
+
+/// <summary>
+/// Лёгкий интерфейс: без стеклянного фона, подсветки рамок и анимаций — для слабых ПК и больших разрешений,
+/// где эти эффекты (их рисует процессор) опускают окно до 15 кадров/с. Включается сам, если интерфейс тормозит.
+/// </summary>
+static class UiMode
+{
+    /// <summary>Настройка «lite»: "" — решает программа, "auto" — включён ею, "1" — включён пользователем, "0" — выключен пользователем.</summary>
+    static string Setting => AppSettings.Get("lite", "");
+    public static bool Lite => Setting is "1" or "auto";
+    /// <summary>Можно ли включить автоматически (пользователь сам ничего не выбирал).</summary>
+    public static bool AutoAllowed => Setting == "";
+    public static void Set(bool on, bool byUser) => AppSettings.Set("lite", on ? (byUser ? "1" : "auto") : "0");
 }
 
 sealed class Tween

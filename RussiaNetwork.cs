@@ -20,9 +20,6 @@ public static class RussiaNetwork
             "Адреса актуальны на момент написания — сверяйте на comss.ru. Открывает сервисы, которые сами не пускают пользователей из России: ChatGPT, Gemini, Copilot, Spotify, некоторые игры. " +
             "От блокировок РКН (YouTube, Discord) НЕ помогает.",
             "83.220.169.155", "212.109.195.93");
-        yield return Dns(G1, "Xbox DNS",
-            "Аналог Comss: снимает региональные ограничения для ИИ-сервисов, Xbox/Microsoft Store и игровых сервисов.",
-            "176.99.11.77", "80.78.247.254");
 
         // ── Обычные публичные DNS ──
         const string G2 = "DNS: публичные";
@@ -47,7 +44,7 @@ public static class RussiaNetwork
                       "  [HKLM\\SOFTWARE\\Policies\\Mozilla\\Firefox\\DNSOverHTTPS]\n    Enabled = 1, ProviderURL = …\n\nОтменить — удалить эти параметры.",
             Description = "Chrome, Edge и Firefox будут получать адреса сайтов через зашифрованный DNS Cloudflare — провайдер не сможет подменить ответ " +
                           "(частый способ блокировки). В браузере появится «Управляется организацией» — это нормально. Перезапустите браузер.\n\n" +
-                          "Не совмещайте с Comss/Xbox DNS: браузер будет обращаться мимо них.",
+                          "Не совмещайте с Comss DNS: браузер будет обращаться мимо него.",
             IsApplied = () => Equals(Reg.Get(Ch, "DnsOverHttpsMode"), "secure") && Equals(Reg.Get(Ed, "DnsOverHttpsMode"), "secure"),
             Apply = () =>
             {
@@ -107,6 +104,36 @@ public static class RussiaNetwork
         }
     };
 
+    /// <summary>
+    /// DNS-сервисы, которые убраны из списка, потому что перестали работать (Xbox DNS — блокировки, октябрь 2026).
+    /// У кого такой DNS остался включён, программа предлагает вернуть DNS провайдера.
+    /// </summary>
+    public static readonly (string Name, string[] Ips)[] Retired = { ("Xbox DNS", new[] { "176.99.11.77", "80.78.247.254" }) };
+
+    /// <summary>Название выведенного из списка DNS, если он сейчас стоит на каком-либо адаптере.</summary>
+    public static string? RetiredInUse()
+    {
+        var cur = DnsCache.Current;
+        return Retired.FirstOrDefault(r => r.Ips.Any(ip => cur.Contains(ip))).Name;
+    }
+
+    public const string Page = C;
+
+    /// <summary>Убранный из списка DNS — только для отката старых сеансов из «Истории».</summary>
+    public static Tweak? RetiredTweak(string name)
+    {
+        var r = Retired.FirstOrDefault(x => x.Name == name);
+        return r.Name == null ? null : Dns("", r.Name, "", r.Ips[0], r.Ips[1]);
+    }
+
+    /// <summary>Вернуть DNS от провайдера (DHCP) на всех адаптерах.</summary>
+    public static void ResetDns()
+    {
+        Shell.PS("Get-NetAdapter | Set-DnsClientServerAddress -ResetServerAddresses");
+        Shell.Run("ipconfig.exe", "/flushdns");
+        DnsCache.Reset();
+    }
+
     const string Ifaces = @"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces";
 
     /// <summary>Снимок DNS: {GUID адаптера}=серверы (пусто — DNS от DHCP/провайдера).</summary>
@@ -150,6 +177,6 @@ public static class RussiaNetwork
             .Where(p => p.Length == 2)
             .Select(p => (p[1] == "OK" ? "✔  " : "✖  ") + p[0] + (p[1] == "OK" ? " — доступен" : " — недоступен"));
         Dialog.InfoFromAnyThread("Доступность сайтов", string.Join("\n", lines) +
-                        "\n\nЕсли YouTube/Discord недоступны — нужен zapret или GoodbyeDPI.\nЕсли недоступен ChatGPT — включите Comss DNS или Xbox DNS.");
+                        "\n\nЕсли YouTube/Discord недоступны — нужен zapret или GoodbyeDPI.\nЕсли недоступен ChatGPT — включите Comss DNS.");
     }
 }

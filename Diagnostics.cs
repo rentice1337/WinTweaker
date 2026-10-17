@@ -129,7 +129,6 @@ static class DnsBench
         new("AdGuard", "94.140.14.14", "AdGuard DNS"),
         new("Яндекс", "77.88.8.8", "Яндекс DNS"),
         new("Comss", "83.220.169.155", "Comss DNS"),
-        new("Xbox DNS", "176.99.11.77", "Xbox DNS"),
     };
 
     static readonly string[] Domains = { "google.com", "youtube.com", "vk.com", "microsoft.com", "github.com" };

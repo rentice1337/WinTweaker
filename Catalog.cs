@@ -350,10 +350,6 @@ public static partial class Catalog
         t.Add(MX(C, "Отключить оптимизацию во весь экран", "Настоящий эксклюзивный полноэкранный режим в старых DirectX 9–11 играх. Может снизить задержку ввода.", false, false,
             (@"HKCU\System\GameConfigStore", "GameDVR_FSEBehaviorMode", 2, 0),
             (@"HKCU\System\GameConfigStore", "GameDVR_HonorUserFSEBehaviorMode", 1, 0)));
-        t.Add(MX(C, "Отключить ускорение мыши", "Флажок «Повышенная точность установки указателя». Движение мыши становится линейным." + Relogin, false, false,
-            (@"HKCU\Control Panel\Mouse", "MouseSpeed", "0", "1"),
-            (@"HKCU\Control Panel\Mouse", "MouseThreshold1", "0", "6"),
-            (@"HKCU\Control Panel\Mouse", "MouseThreshold2", "0", "10")));
         GameNetwork(t);
     }
 
@@ -474,6 +470,22 @@ public static partial class Catalog
         t.Add(R(C, "Предпочитать IPv4 вместо IPv6",
             "Официальный способ Microsoft (DisabledComponents = 0x20). Помогает, если у провайдера кривой IPv6 и сайты открываются с задержкой.",
             @"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 0x20, null, restart: true));
+        // ── оптимизация ──
+        t.Add(NicForGames(C));
+        const string V6 = @"HKLM\SOFTWARE\Policies\Microsoft\Windows\TCPIP\v6Transition";
+        var tunnels = MX(C, "Отключить Teredo и ISATAP",
+            "Лишние туннельные адаптеры IPv6: почти никому не нужны, но висят в системе и иногда мешают сети. " +
+            "Не отключайте, если пользуетесь голосовым чатом и группами в приложении Xbox — ему нужен Teredo.", false, true,
+            (V6, "Teredo_State", "Disabled", null),
+            (V6, "ISATAP_State", "Disabled", null));
+        tunnels.Group = "Оптимизация";
+        t.Add(tunnels);
+        t.Add(Act(C, "Действия", "Вернуть настройки TCP по умолчанию",
+            "Возвращает стандартные настройки TCP Windows 10: автонастройку окна приёма, RSS, алгоритм CUBIC и другие. " +
+            "Помогает, если «ускорители интернета» или другие твикеры сломали скорость загрузки.",
+            ResetTcp, details:
+            "Команды:\n  netsh int tcp set global autotuninglevel=normal\n  netsh int tcp set heuristics disabled\n  netsh int tcp set global rss=enabled\n" +
+            "  netsh int tcp set global ecncapability=default\n  netsh int tcp set global timestamps=default\n  netsh int tcp set supplemental internet congestionprovider=cubic"));
         t.Add(Act(C, "Действия", "Очистить кэш DNS", "ipconfig /flushdns — если сайт «переехал», а открывается старый адрес.",
             () => Shell.Run("ipconfig.exe", "/flushdns")));
         t.Add(Act(C, "Действия", "Сбросить сетевые настройки",
@@ -481,6 +493,55 @@ public static partial class Catalog
             "Сбросит статические IP-адреса. Нужна перезагрузка.",
             () => { Shell.Run("netsh.exe", "winsock reset"); Shell.Run("netsh.exe", "int ip reset"); }, risky: true));
     }
+
+    // ───── сеть: сетевая карта и TCP ─────
+
+    static void ResetTcp()
+    {
+        foreach (var args in new[]
+        {
+            "int tcp set global autotuninglevel=normal", "int tcp set heuristics disabled", "int tcp set global rss=enabled",
+            "int tcp set global ecncapability=default", "int tcp set global timestamps=default",
+            "int tcp set supplemental internet congestionprovider=cubic",
+        })
+            Shell.Run("netsh.exe", args);
+    }
+
+    /// <summary>Параметры драйвера, которые экономят энергию или копят пакеты ценой задержки (0 — выключено).</summary>
+    const string NicKeys = "'*EEE','*InterruptModeration','EnableGreenEthernet','AdvancedEEE','GigaLite','EnableGigaLite'";
+    const string NicProps = "$a = Get-NetAdapter -Physical | Where-Object PhysicalMediaType -eq '802.3'; " +
+                            "$p = $a | Get-NetAdapterAdvancedProperty -RegistryKeyword " + NicKeys + " -ErrorAction SilentlyContinue; ";
+
+    static string PsQuote(string s) => "'" + s.Replace("'", "''") + "'";
+
+    static Tweak NicForGames(string cat) => new()
+    {
+        Category = cat, Group = "Оптимизация", Name = "Сетевая карта для игр", Risky = true,
+        Description = "Отключает в драйвере проводной сетевой карты энергосбережение (Energy-Efficient Ethernet, Green Ethernet) " +
+                      "и модерацию прерываний — пакеты обрабатываются сразу, задержка ниже и ровнее. Немного выше нагрузка на процессор. " +
+                      "При применении сеть пропадёт на несколько секунд — карта перезапускается. Wi-Fi не затрагивается.",
+        Details = "PowerShell, для проводных адаптеров:\n  Set-NetAdapterAdvancedProperty -RegistryKeyword *EEE, *InterruptModeration,\n" +
+                  "    EnableGreenEthernet, AdvancedEEE, GigaLite -RegistryValue 0 -NoRestart\n  Restart-NetAdapter\n\n" +
+                  "Прежние значения сохраняются в журнале: откат из «Истории» возвращает их точно; выключение — значения драйвера по умолчанию.",
+        IsApplied = () => Shell.PS(NicProps + "if (-not $p) { 'none' } elseif ($p | Where-Object { [string]$_.RegistryValue[0] -ne '0' }) { 'off' } else { 'on' }").Trim() == "on",
+        Snapshot = () => Shell.PS(NicProps + "($p | ForEach-Object { $_.Name + '|' + $_.RegistryKeyword + '|' + [string]$_.RegistryValue[0] }) -join ';'").Trim(),
+        Restore = snap =>
+        {
+            var cmds = snap.Split(';', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Split('|')).Where(x => x.Length == 3)
+                .Select(x => $"Set-NetAdapterAdvancedProperty -Name {PsQuote(x[0])} -RegistryKeyword {PsQuote(x[1])} -RegistryValue {PsQuote(x[2])} -NoRestart -ErrorAction SilentlyContinue")
+                .ToList();
+            if (cmds.Count == 0) return;
+            Shell.PS(string.Join("; ", cmds) + "; Get-NetAdapter -Physical | Where-Object PhysicalMediaType -eq '802.3' | Restart-NetAdapter");
+        },
+        Apply = () =>
+        {
+            var r = Shell.PS(NicProps + "if (-not $p) { 'none' } else { $p | Where-Object { [string]$_.RegistryValue[0] -ne '0' } | " +
+                             "ForEach-Object { Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword $_.RegistryKeyword -RegistryValue 0 -NoRestart }; " +
+                             "$a | Restart-NetAdapter; 'ok' }").Trim();
+            if (r.EndsWith("none")) throw new InvalidOperationException("У проводной сетевой карты нет параметров энергосбережения и модерации прерываний — менять нечего.");
+        },
+        Revert = () => Shell.PS(NicProps + "$a | Reset-NetAdapterAdvancedProperty -RegistryKeyword " + NicKeys + " -NoRestart -ErrorAction SilentlyContinue; $a | Restart-NetAdapter"),
+    };
 
     public static void RestartExplorer() =>
         Shell.Run("cmd.exe", "/c taskkill /f /im explorer.exe & start explorer.exe");

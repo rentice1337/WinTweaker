@@ -170,7 +170,9 @@ public static class Journal
                 continue;
             }
             var t = tweaks.FirstOrDefault(x => x.Name == item.Name && x.Category == item.Category)
-                    ?? GameExe.Rebuild(item.Category, item.Name);
+                    ?? GameExe.Rebuild(item.Category, item.Name)
+                    ?? tweaks.FirstOrDefault(x => x.Name == item.Name)      // настройку перенесли в другой раздел
+                    ?? RussiaNetwork.RetiredTweak(item.Name);               // убранный из списка DNS — откат всё равно работает
 
             foreach (var op in Enumerable.Reverse(item.Reg)) RestoreOp(op);
 

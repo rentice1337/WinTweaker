@@ -1223,6 +1223,7 @@ class ReportDialog : RoundForm
         KeyPreview = true;
         Opacity = 0;
         Size = new Size(720, HasFps ? 640 : 470);
+        CloseOnClickOutside = true; // справочное окно — закрывается кликом мимо
         var ok = new FlatBtn("", "Понятно") { Primary = true };
         ok.Location = new Point(Width - 24 - ok.Width + ok.Pad, Height - 22 - ok.Height + ok.Pad);
         ok.Click += (_, _) => Finish();
@@ -1237,6 +1238,8 @@ class ReportDialog : RoundForm
         baseTop = Top;
         Motion.Run(240, p => { Opacity = p; Top = baseTop + (int)Math.Round(12 * (1 - p)); });
     }
+
+    protected override void ClickedOutside() => Finish();
 
     void Finish()
     {

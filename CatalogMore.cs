@@ -201,6 +201,14 @@ public static partial class Catalog
             Mouse, "MouseSensitivity", 1, 20, 1, "", 10, asString: true, live: v => Live.Spi(0x0071, 0, (IntPtr)v)));
         t.Add(RegSlider(C, "Мышь", "Прокрутка колесом", "Сколько строк прокручивает один щелчок колеса. Применяется сразу.",
             Desk, "WheelScrollLines", 1, 20, 1, "строк", 3, asString: true, live: v => Live.Spi(0x0069, (uint)v, IntPtr.Zero)));
+        // ускорение мыши — здесь, рядом со скоростью указателя; игровой пресет включает его по названию
+        var accel = MX(C, "Отключить ускорение мыши", "Флажок «Повышенная точность установки указателя». Движение мыши становится линейным: " +
+            "одно и то же движение руки всегда даёт одинаковый поворот прицела." + Relogin, false, false,
+            (@"HKCU\Control Panel\Mouse", "MouseSpeed", "0", "1"),
+            (@"HKCU\Control Panel\Mouse", "MouseThreshold1", "0", "6"),
+            (@"HKCU\Control Panel\Mouse", "MouseThreshold2", "0", "10"));
+        accel.Group = "Мышь";
+        t.Add(accel);
         t.Add(RegSlider(C, "Мышь", "Скорость двойного щелчка", "Максимальная пауза между щелчками. Меньше — нужно щёлкать быстрее.",
             Mouse, "DoubleClickSpeed", 200, 900, 50, "мс", 500, asString: true, live: v => Live.DoubleClick(v)));
         t.Add(RegChoice(C, "Клавиатура", "Задержка перед повтором", "Через сколько начинает повторяться зажатая клавиша. Применяется сразу.",

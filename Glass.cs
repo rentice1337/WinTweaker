@@ -51,6 +51,16 @@ static class Glass
     public static void Rebuild()
     {
         if (host == null || host.Width < 50 || host.Height < 50) return;
+        if (UiMode.Lite)
+        {
+            // лёгкий интерфейс: вместо картинки фона — сплошные цвета (без покадрового копирования фона под каждым элементом)
+            WallpaperOn = false;
+            var was = backdrop;
+            backdrop = null;
+            was?.Dispose();
+            Spotlight.ResetAssets();
+            return;
+        }
         bool transparency = !Equals(Reg.Get(@"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "EnableTransparency"), 0);
         WallpaperOn = transparency && AppSettings.Get("glass", "1") == "1";
 
