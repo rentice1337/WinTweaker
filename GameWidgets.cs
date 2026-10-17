@@ -32,6 +32,8 @@ static class GameUI
         Theme.Fill(g, Theme.Lerp(Theme.Bg, c, a), new RectangleF(x, y, d, d), d / 2);
     }
 
+    public static readonly Font H1 = Theme.F(12.5f, FontStyle.Bold), H2 = Theme.F(12f, FontStyle.Bold);
+
     public static string Bytes(long b) => b >= 1L << 30 ? $"{b / 1073741824.0:0.0} ГБ" : b >= 1L << 20 ? $"{b / 1048576.0:0} МБ" : b > 0 ? $"{b / 1024.0:0} КБ" : "пусто";
 
     public static string Duration(TimeSpan t) => t.TotalHours >= 1 ? $"{(int)t.TotalHours} ч {t.Minutes} мин" : $"{Math.Max(1, (int)t.TotalMinutes)} мин";
@@ -102,7 +104,7 @@ class ModeBanner : Widget
         int x = r.Left + 92, w = Auto.Left - x - 16;
         var flags = TextFormatFlags.Left | TextFormatFlags.EndEllipsis;
         string title = on ? $"Игровой режим · {GameMode.Reason}" : "Игровой режим выключен";
-        TextRenderer.DrawText(g, title, Theme.F(12.5f, FontStyle.Bold), new Rectangle(x, r.Top + 24, w, 26), C(Theme.Text), flags);
+        TextRenderer.DrawText(g, title, GameUI.H1, new Rectangle(x, r.Top + 24, w, 26), C(Theme.Text), flags);
         string sub;
         if (on)
         {
@@ -193,7 +195,7 @@ class ReadyWidget : Widget
         {
             string s = Running ? "Проверяю питание, запись, фоновую нагрузку, память, пинг и драйвер…"
                                : "Перед матчем: схема питания, фоновая запись, нагрузка и память, загрузки в фоне, пинг, обновления и драйвер видеокарты.";
-            TextRenderer.DrawText(g, Running ? "Проверка…" : "Проверить ПК перед игрой", Theme.F(12f, FontStyle.Bold), new Rectangle(x, r.Top + 16, w, 24), C(Theme.Text), flags);
+            TextRenderer.DrawText(g, Running ? "Проверка…" : "Проверить ПК перед игрой", GameUI.H2, new Rectangle(x, r.Top + 16, w, 24), C(Theme.Text), flags);
             TextRenderer.DrawText(g, s, Theme.Body, new Rectangle(x, r.Top + 44, w, 40), C(Theme.Muted), TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
             return;
         }
@@ -202,7 +204,7 @@ class ReadyWidget : Widget
                          : warn > 0 ? ($"Почти готов — советов: {warn}", Theme.Warn)
                          : ("Готов к игре", Theme.Good);
         GameUI.Dot(g, col, x, r.Top + 24, 12, Appear);
-        TextRenderer.DrawText(g, title, Theme.F(12.5f, FontStyle.Bold), new Rectangle(x + 24, r.Top + 16, w - 24, 26), C(Theme.Text), flags);
+        TextRenderer.DrawText(g, title, GameUI.H1, new Rectangle(x + 24, r.Top + 16, w - 24, 26), C(Theme.Text), flags);
         TextRenderer.DrawText(g, Running ? "Проверяю заново…" : $"Проверено: {checks.Count} пунктов", Theme.Tiny, new Rectangle(x + 24, r.Top + 40, w - 24, 18), C(Theme.Muted), flags);
 
         int colW = (r.Width - 40 - 20) / 2;
@@ -391,7 +393,7 @@ class LibraryWidget : Widget
 
 class PingWidget : Widget
 {
-    public readonly Segmented Mode = new(new[] { "Valve · CS2, Dota 2", "AWS · Fortnite", "Свой адрес" });
+    public readonly Segmented Mode = new(new[] { "Valve", "AWS", "Свой адрес" });
     public readonly FlatBtn Run = new("", "Проверить") { Primary = true };
     public readonly FlatBtn Trace = new("", "Трассировка") { Visible = false };
     List<GameNet.Result>? results;

@@ -282,6 +282,9 @@ static class GameWatcher
                 using (p)
                 {
                     if (!watched.TryGetValue(p.ProcessName, out var g)) continue;
+                    // игра без пресета (exe угадан по размеру) — только если она реально на весь экран:
+                    // так программы из библиотеки Steam (обои, OBS) не включат игровой режим
+                    if (g.Info == null && FullscreenApp.ForegroundPid() != p.Id) continue;
                     string exe = "";
                     try { exe = p.MainModule?.FileName ?? ""; } catch { }
                     var run = new Running(g.Name, exe, p.Id, g.Info, DateTime.Now);
