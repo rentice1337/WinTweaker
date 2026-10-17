@@ -469,6 +469,7 @@ class DnsWidget : Widget
     protected override void OnLayout(LayoutEventArgs e)
     {
         base.OnLayout(e);
+        if (Run is null || UseBest is null) return;
         Run.Location = new Point(10 - 8 + 8, Height - Run.Height - 6);
         UseBest.Location = new Point(Width - UseBest.Width - 14, Height - UseBest.Height - 14);
     }

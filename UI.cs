@@ -919,6 +919,7 @@ class TweakRow : Control
     protected override void OnLayout(LayoutEventArgs e)
     {
         base.OnLayout(e);
+        if (InfoBtn is null) return; // раскладка может прийти из конструктора, до создания кнопок
         int x;
         if (Toggle != null) { Toggle.Location = new Point(Width - Toggle.Width - 6, (Height - Toggle.Height) / 2); x = Toggle.Left; }
         else { RunBtn!.Location = new Point(Width - RunBtn.Width - 4, (Height - RunBtn.Height) / 2); x = RunBtn.Left; }
