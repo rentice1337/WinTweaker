@@ -14,7 +14,8 @@
 ## Как убедиться, что exe настоящий
 
 - Скачивайте программу только со страницы [Releases](https://github.com/rentice1337/WinTweaker/releases) этого репозитория.
-- Каждый релиз собирается в [GitHub Actions](https://github.com/rentice1337/WinTweaker/actions/workflows/build.yml) из открытого кода.
+- Каждый релиз собирается в [GitHub Actions](https://github.com/rentice1337/WinTweaker/actions/workflows/build.yml) из кода этого репозитория.
+- Exe подписан сертификатом **rentice1337**: **Свойства** → **Цифровые подписи**. Отпечаток сертификата указан в описании каждого релиза — он должен совпадать.
 - Рядом с exe лежит `WinTweaker.exe.sha256`. Сравните его с выводом команды:
   ```
   certutil -hashfile WinTweaker.exe SHA256

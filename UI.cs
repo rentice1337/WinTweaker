@@ -695,6 +695,9 @@ static class Logo
 {
     static readonly Font name = new("Segoe UI Semibold", 15f);
 
+    /// <summary>Строка авторских прав — та же, что в свойствах exe.</summary>
+    public const string Copyright = "© 2026 rentice1337. Все права защищены.";
+
     public static string Version
     {
         get

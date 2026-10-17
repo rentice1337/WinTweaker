@@ -2,6 +2,10 @@
 
 Спасибо за интерес к WinTweak! Ошибки, идеи и исправления принимаются через [issues](https://github.com/rentice1337/WinTweaker/issues/new/choose) и pull request.
 
+Лицензия WinTweak закрытая: © 2026 rentice1337, все права защищены (см. [LICENSE](LICENSE)).
+Отправляя pull request, вы соглашаетесь с разделом 3 лицензии — изменения войдут в программу на условиях автора.
+Сборка ниже нужна, чтобы проверить свои изменения; распространять собранные версии нельзя.
+
 ## Сборка
 
 Нужен [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) и Windows.
