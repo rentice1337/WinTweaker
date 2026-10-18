@@ -20,6 +20,11 @@ on:
         description: 'Тег релиза, к которому приложить WinTweaker.exe (например v2.0.0). Пусто — просто сборка.'
         required: false
         default: ''
+      bench:
+        description: 'Замерить плавность интерфейса (кадры при переходах, прокрутке, подсветке)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -60,6 +65,19 @@ jobs:
 
       - name: Publish
         run: dotnet publish WinTweaker.csproj -c Release -p:Version=${{ env.VERSION }} -o publish
+
+      - name: UI benchmark
+        if: github.event.inputs.bench == 'true'
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'bench.txt'
+          $p = Start-Process publish\WinTweaker.exe -ArgumentList "--bench=$out" -PassThru
+          if (-not $p.WaitForExit(420000)) { $p.Kill(); Write-Host '::warning title=bench::не уложился в 7 минут' }
+          if (Test-Path $out) {
+            $t = Get-Content $out -Raw
+            Write-Host $t
+            Write-Host "::warning title=bench::$($t -replace "`r?`n", '%0A')"
+          } else { Write-Host '::warning title=bench::файл замера не создан' }
 
       - name: Verify admin manifest
         shell: pwsh

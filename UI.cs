@@ -90,9 +90,15 @@ static class Motion
         }
     }
 
+    /// <summary>Есть ли сейчас анимации.</summary>
+    public static bool Busy => tweens.Count > 0;
+    /// <summary>Для замера плавности: время каждого кадра анимаций.</summary>
+    public static List<double>? Record;
+
     static void Tick()
     {
         double now = Now;
+        Record?.Add(now);
         Measure(now);
         foreach (var tw in tweens.ToArray())
         {

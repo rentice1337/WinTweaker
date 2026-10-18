@@ -141,6 +141,7 @@ public partial class MainForm : Form
         {
             cursorTimer.Start();
             await LoadStateAsync();
+            if (BenchOut != null) { AppSettings.Set("lite", "0"); _ = RunBench(); return; }
             await FirstRunAsync();
             await OfferRetiredDns();
             if (!GameLibrary.Scanned) _ = GameLibrary.ScanAsync(); // для автоопределения игр

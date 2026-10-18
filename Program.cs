@@ -23,6 +23,13 @@ internal static class Program
             return;
         }
 
+        // замер плавности интерфейса для проверки сборки (не для пользователей)
+        if (args.FirstOrDefault(a => a.StartsWith("--bench=", StringComparison.OrdinalIgnoreCase)) is string b)
+        {
+            MainForm.BenchOut = b["--bench=".Length..];
+            AppSettings.Set("lite", "0");
+        }
+
         // одна копия: повторный запуск показывает уже работающую (например, из трея)
         using var single = new Mutex(true, "WinTweak.Single", out bool first);
         if (!first)
