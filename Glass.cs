@@ -7,16 +7,11 @@ using Microsoft.Win32;
 namespace WinTweaker;
 
 /// <summary>
-/// «Стекло» в духе Mica: под окном — размытые обои рабочего стола, затемнение и неоновые пятна акцента.
-/// Картинка готовится один раз (и после перемещения окна), дальше каждый контрол рисует свой кусок
-/// через TextureBrush — это дёшево. Слои поверх: боковая панель → карточка → строка с подсветкой.
-/// Если в Windows выключены «Эффекты прозрачности», обои не используются — остаются тёмный фон и свечение.
+/// Фон окна: тёмная основа и мягкие пятна свечения цветом акцента. Картинка готовится один раз (и при смене
+/// размера или акцента), дальше каждый элемент копирует свой кусок. Слои поверх: боковая панель → карточка → строка.
 /// </summary>
 static class Glass
 {
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    static extern bool SystemParametersInfo(uint action, uint param, StringBuilder value, uint winIni);
-
     public static readonly Color BgTint = Color.FromArgb(206, 9, 10, 15);
     public static readonly Color SideTint = Color.FromArgb(120, 6, 7, 11);
     public static readonly Color CardTint = Color.FromArgb(118, 32, 34, 47);
@@ -27,8 +22,6 @@ static class Glass
     static Bitmap? backdrop;   // высота 3H: [кадр, отражённый кадр, кадр] — период 2H, любой кусок ≤ H вырезается одним блитом
     static int frameH;
     static Form? host;
-
-    public static bool WallpaperOn { get; private set; }
 
     public static void Attach(Form f)
     {
@@ -51,28 +44,11 @@ static class Glass
     public static void Rebuild()
     {
         if (host == null || host.Width < 50 || host.Height < 50) return;
-        if (UiMode.Lite)
-        {
-            // лёгкий интерфейс: вместо картинки фона — сплошные цвета (без покадрового копирования фона под каждым элементом)
-            WallpaperOn = false;
-            var was = backdrop;
-            backdrop = null;
-            was?.Dispose();
-            Spotlight.ResetAssets();
-            return;
-        }
-        bool transparency = !Equals(Reg.Get(@"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "EnableTransparency"), 0);
-        WallpaperOn = transparency && AppSettings.Get("glass", "1") == "1";
-
         var size = host.Size;
         using var frame = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppPArgb);
         using (var g = Graphics.FromImage(frame))
         {
             g.Clear(Theme.Bg);
-            if (WallpaperOn)
-            {
-                try { DrawWallpaper(g, size, host.Bounds); } catch { /* нет обоев — остаётся тёмный фон */ }
-            }
             using (var tint = new SolidBrush(BgTint)) g.FillRectangle(tint, 0, 0, size.Width, size.Height);
             Blob(g, new PointF(size.Width * 0.22f, -size.Height * 0.10f), size.Width * 0.55f, Color.FromArgb(56, Theme.Accent));
             Blob(g, new PointF(size.Width * 1.02f, size.Height * 1.05f), size.Width * 0.50f, Color.FromArgb(34, Theme.Accent));
@@ -108,66 +84,6 @@ static class Glass
             SurroundColors = new[] { Color.FromArgb(0, col) }
         };
         g.FillPath(b, path);
-    }
-
-    static void DrawWallpaper(Graphics g, Size size, Rectangle window)
-    {
-        using var wp = LoadWallpaper();
-        if (wp == null) return;
-        var screen = Screen.FromRectangle(window).Bounds;
-
-        // обои в режиме «Заполнение»: масштаб, при котором картинка покрывает экран
-        float scale = Math.Max((float)screen.Width / wp.Width, (float)screen.Height / wp.Height);
-        float ox = screen.X + (screen.Width - wp.Width * scale) / 2;
-        float oy = screen.Y + (screen.Height - wp.Height * scale) / 2;
-        var src = new RectangleF((window.X - ox) / scale, (window.Y - oy) / scale, size.Width / scale, size.Height / scale);
-
-        // размытие: уменьшаем в ~24 раза и растягиваем обратно бикубикой
-        int sw = Math.Max(4, size.Width / 24), sh = Math.Max(4, size.Height / 24);
-        using var small = new Bitmap(sw, sh, PixelFormat.Format32bppPArgb);
-        using (var sg = Graphics.FromImage(small))
-        {
-            sg.Clear(Theme.Bg);
-            sg.InterpolationMode = InterpolationMode.HighQualityBilinear;
-            sg.DrawImage(wp, new Rectangle(0, 0, sw, sh), src, GraphicsUnit.Pixel);
-        }
-        using var ia = new ImageAttributes();
-        ia.SetWrapMode(WrapMode.TileFlipXY); // без тёмной каймы по краям
-        ia.SetColorMatrix(Saturation(0.8f));
-        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        g.DrawImage(small, new Rectangle(0, 0, size.Width, size.Height), 0, 0, sw, sh, GraphicsUnit.Pixel, ia);
-    }
-
-    static ColorMatrix Saturation(float s)
-    {
-        const float lr = 0.2126f, lg = 0.7152f, lb = 0.0722f;
-        float a = (1 - s);
-        return new ColorMatrix(new[]
-        {
-            new[] { a * lr + s, a * lr, a * lr, 0, 0 },
-            new[] { a * lg, a * lg + s, a * lg, 0, 0 },
-            new[] { a * lb, a * lb, a * lb + s, 0, 0 },
-            new float[] { 0, 0, 0, 1, 0 },
-            new float[] { 0, 0, 0, 0, 1 }
-        });
-    }
-
-    static Image? LoadWallpaper()
-    {
-        try
-        {
-            // TranscodedWallpaper — актуальные обои, даже при слайд-шоу
-            string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                @"Microsoft\Windows\Themes\TranscodedWallpaper");
-            if (!File.Exists(path))
-            {
-                var sb = new StringBuilder(520);
-                path = SystemParametersInfo(0x0073 /* SPI_GETDESKWALLPAPER */, 520, sb, 0) ? sb.ToString() : "";
-            }
-            if (path == "" || !File.Exists(path)) return null;
-            return Image.FromStream(new MemoryStream(File.ReadAllBytes(path)));
-        }
-        catch { return null; }
     }
 
     // ───────── Рисование фона под контролом ─────────

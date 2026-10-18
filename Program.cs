@@ -27,7 +27,6 @@ internal static class Program
         if (args.FirstOrDefault(a => a.StartsWith("--bench=", StringComparison.OrdinalIgnoreCase)) is string b)
         {
             MainForm.BenchOut = b["--bench=".Length..];
-            AppSettings.Set("lite", "0");
             Motion.ForceOn = true;
         }
 

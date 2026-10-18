@@ -151,7 +151,7 @@ static class GameMode
             }
         }
         catch { }
-        Motion.UserOff = UiMode.Lite || AppSettings.Get("anim", "1") == "0";
+        Motion.UserOff = AppSettings.Get("anim", "1") == "0";
         try { if (!string.IsNullOrEmpty(s.Power)) Shell.Run("powercfg", $"/setactive {s.Power}"); } catch { }
         try { if (s.WuWasRunning) Shell.Run("net.exe", "start wuauserv"); } catch { }
         foreach (var w in s.Wifi)

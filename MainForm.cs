@@ -141,7 +141,7 @@ public partial class MainForm : Form
         {
             cursorTimer.Start();
             await LoadStateAsync();
-            if (BenchOut != null) { AppSettings.Set("lite", "0"); _ = RunBench(); return; }
+            if (BenchOut != null) { _ = RunBench(); return; }
             await FirstRunAsync();
             await OfferRetiredDns();
             if (!GameLibrary.Scanned) _ = GameLibrary.ScanAsync(); // для автоопределения игр
@@ -344,16 +344,6 @@ public partial class MainForm : Form
             trigger.SetBounds(min.Left - 14 - w, 15, w, 34);
         };
         return top;
-    }
-
-    void ToggleGlass()
-    {
-        bool on = AppSettings.Get("glass", "1") == "1";
-        AppSettings.Set("glass", on ? "0" : "1");
-        Glass.Rebuild();
-        Invalidate(true);
-        if (!on && !Glass.WallpaperOn)
-            Toast.Pop(this, "В Windows выключены «Эффекты прозрачности» — обои под окном не показываются", Tone.Info);
     }
 
     // Плавная смена акцента: цвет перетекает 300 мс, затем пересобирается фон со свечением

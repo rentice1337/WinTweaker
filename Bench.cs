@@ -43,7 +43,9 @@ public partial class MainForm
         {
             var scr = Screen.FromControl(this).Bounds;
             WindowState = FormWindowState.Normal;
-            Bounds = new Rectangle(scr.X, scr.Y, Math.Min(1600, scr.Width), Math.Min(1000, scr.Height));
+            // окно как на типичном мониторе 1920×1080 (может выходить за маленький экран сервера сборки)
+            MaximumSize = Size.Empty;
+            Bounds = new Rectangle(scr.X, scr.Y, 1920, 1040);
             sb.AppendLine($"экран {scr.Width}x{scr.Height}, окно {Width}x{Height}, ядер {Environment.ProcessorCount}");
             var sw = Stopwatch.StartNew();
             while (!loaded && sw.Elapsed.TotalSeconds < 180) await Task.Delay(100);

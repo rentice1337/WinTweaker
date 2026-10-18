@@ -19,16 +19,6 @@ public partial class MainForm
         var picker = new AccentPicker(Array.FindIndex(Theme.Accents, a => a.Color == Theme.Accent));
         picker.Picked += ChangeAccent;
         look.AddCustom("Цвет акцента", "Кнопки, переключатели, свечение и логотип", picker);
-        look.Add("Лёгкий интерфейс", "Без стекла, подсветки и анимаций — окно летает на слабых ПК и больших мониторах. Включается сам, если интерфейс тормозит",
-            () => UiMode.Lite, on => { UiMode.Set(on, byUser: true); ApplyUiMode(); });
-        look.Add("Стекло", "Размытые обои рабочего стола под окном (нужны «Эффекты прозрачности» Windows)",
-            () => AppSettings.Get("glass", "1") == "1", on =>
-            {
-                AppSettings.Set("glass", on ? "1" : "0");
-                Glass.Rebuild();
-                Invalidate(true);
-                if (on && !Glass.WallpaperOn) Toast.Pop(this, "В Windows выключены «Эффекты прозрачности» — обои под окном не показываются", Tone.Info);
-            });
         look.Add("Подсветка под курсором", "Рамки карточек подсвечиваются акцентом рядом с курсором",
             () => AppSettings.Get("spot", "1") == "1", on => { AppSettings.Set("spot", on ? "1" : "0"); ApplyUiMode(rebuild: false); });
         look.Add("Анимации", "Плавные переходы и появление карточек. Выключите на слабом ПК",
@@ -92,11 +82,11 @@ public partial class MainForm
 
     bool watchOn, autostartOn;
 
-    /// <summary>Эффекты с учётом лёгкого интерфейса: он отключает стекло, подсветку и анимации, не трогая их собственные настройки.</summary>
+    /// <summary>Применить настройки эффектов (подсветка, анимации).</summary>
     void ApplyUiMode(bool rebuild = true)
     {
-        Motion.UserOff = UiMode.Lite || AppSettings.Get("anim", "1") == "0";
-        Spotlight.Enabled = !UiMode.Lite && AppSettings.Get("spot", "1") == "1";
+        Motion.UserOff = AppSettings.Get("anim", "1") == "0";
+        Spotlight.Enabled = AppSettings.Get("spot", "1") == "1";
         if (rebuild) Glass.Rebuild();
         Invalidate(true);
     }
@@ -104,13 +94,6 @@ public partial class MainForm
     void ApplyAppSettings()
     {
         ApplyUiMode(rebuild: false);
-        Motion.Slow += fps =>
-        {
-            if (!UiMode.AutoAllowed || IsDisposed) return;
-            UiMode.Set(true, byUser: false);
-            ApplyUiMode();
-            Toast.Pop(this, $"Окно шло рывками (~{fps} кадров/с) — включён лёгкий интерфейс. Вернуть эффекты: «Настройки» → «Оформление»", Tone.Info);
-        };
         restoreToggle.Checked = AppSettings.Get("restore", "1") == "1";
         restoreToggle.CheckedChanged += (_, _) => AppSettings.Set("restore", restoreToggle.Checked ? "1" : "0");
     }
