@@ -45,7 +45,7 @@ jobs:
       SIGN_PFX: ${{ secrets.SIGN_PFX_BASE64 }}
       SIGN_PASSWORD: ${{ secrets.SIGN_PFX_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
