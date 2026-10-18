@@ -28,6 +28,7 @@ internal static class Program
         {
             MainForm.BenchOut = b["--bench=".Length..];
             AppSettings.Set("lite", "0");
+            Motion.ForceOn = true;
         }
 
         // одна копия: повторный запуск показывает уже работающую (например, из трея)

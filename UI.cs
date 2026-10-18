@@ -18,7 +18,9 @@ static class Motion
     static readonly bool systemReduced = !QueryAnimations();
     /// <summary>Выключено пользователем в «Настройках».</summary>
     public static bool UserOff { get; set; }
-    public static bool Reduced => systemReduced || UserOff;
+    /// <summary>Только для замера плавности: анимации идут, даже если в Windows они выключены.</summary>
+    public static bool ForceOn { get; set; }
+    public static bool Reduced => !ForceOn && (systemReduced || UserOff);
 
     static bool QueryAnimations()
     {
