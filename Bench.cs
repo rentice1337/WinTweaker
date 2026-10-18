@@ -58,6 +58,7 @@ public partial class MainForm
                 foreach (var cat in pages)
                 {
                     Motion.Record = new List<double>();
+                    Motion.Work ??= new List<double>();
                     var t = Stopwatch.StartNew();
                     SelectCategory(cat);
                     builds.Add(t.Elapsed.TotalMilliseconds);
@@ -69,6 +70,8 @@ public partial class MainForm
             var bs = builds.OrderBy(x => x).ToList();
             sb.AppendLine($"построение страницы (до первого кадра): медиана {bs[bs.Count / 2]:0} мс, p90 {bs[(int)(bs.Count * 0.9)]:0} мс, худшее {bs[^1]:0} мс");
             sb.AppendLine(Stats("анимация перехода", ticks));
+            sb.AppendLine(Stats("  работа кадра при переходе", Motion.Work!));
+            Motion.Work = new List<double>();
 
             // 2) прокрутка длинной страницы
             SelectCategory(Programs.Cat);
@@ -79,6 +82,8 @@ public partial class MainForm
             for (int i = 0; i < 30; i++) { view.Wheel(120); await Task.Delay(45); }
             await WaitIdle(2000);
             sb.AppendLine(Stats("прокрутка", Gaps(Motion.Record)));
+            sb.AppendLine(Stats("  работа кадра при прокрутке", Motion.Work!));
+            Motion.Work = null;
             Motion.Record = null;
 
             // 3) подсветка рамок: курсор ходит над карточками (каждый шаг рисуется сразу)

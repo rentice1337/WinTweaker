@@ -39,13 +39,58 @@ static class Motion
 
     static readonly Stopwatch clock = Stopwatch.StartNew();
     static readonly List<Tween> tweens = new();
-    static readonly System.Windows.Forms.Timer timer = new() { Interval = 16 };
+    [DllImport("dwmapi.dll")] static extern int DwmFlush();
+
+    // Кадры анимаций — по обновлению экрана, а не по таймеру WinForms: таймер Windows тикает шагами 15,6 мс,
+    // и «каждые 16 мс» превращались в 31 мс — потолок ~32 кадра/с. Отдельный поток ждёт следующий кадр
+    // композитора (DwmFlush: 60 Гц — 16,7 мс, 144 Гц — 6,9 мс) и просит UI-поток посчитать кадр.
+    static Control? sync;
+    static readonly AutoResetEvent wake = new(false);
+    static volatile bool running;
+    static int queued;
+    static Thread? pacer;
 
     static Motion()
     {
-        // разрешение системного таймера 1 мс: кадры анимаций идут ровно раз в 16 мс (~60 кадров/с), а не рывками по 15,6–31 мс
         try { timeBeginPeriod(1); } catch { }
-        timer.Tick += (_, _) => Tick();
+    }
+
+    static void Start()
+    {
+        if (sync == null) { sync = new Control(); _ = sync.Handle; } // окно для BeginInvoke — в потоке интерфейса (Run зовут из него)
+        if (running) return;
+        running = true;
+        if (pacer == null)
+        {
+            pacer = new Thread(Pace) { IsBackground = true, Name = "WinTweak frames", Priority = ThreadPriority.AboveNormal };
+            pacer.Start();
+        }
+        else wake.Set();
+    }
+
+    static void Pace()
+    {
+        var sw = Stopwatch.StartNew();
+        while (true)
+        {
+            if (!running) { wake.WaitOne(); sw.Restart(); continue; }
+            // ждём кадр композитора; если композиции нет — сами отмеряем ~60 кадров/с
+            if (DwmFlush() != 0 || sw.Elapsed.TotalMilliseconds < 2)
+                while (sw.Elapsed.TotalMilliseconds < 16.6) Thread.Sleep(1);
+            sw.Restart();
+            // кадр не копится: пока UI-поток не обработал прошлый, новый не ставим
+            if (Interlocked.Exchange(ref queued, 1) == 0)
+            {
+                try { sync!.BeginInvoke(FrameOnUi); }
+                catch { queued = 0; Thread.Sleep(16); }
+            }
+        }
+    }
+
+    static void FrameOnUi()
+    {
+        queued = 0;
+        Tick();
     }
 
     public static double Now => clock.Elapsed.TotalMilliseconds;
@@ -61,7 +106,7 @@ static class Motion
             return tw;
         }
         tweens.Add(tw);
-        timer.Start();
+        Start();
         return tw;
     }
 
@@ -96,6 +141,8 @@ static class Motion
     public static bool Busy => tweens.Count > 0;
     /// <summary>Для замера плавности: время каждого кадра анимаций.</summary>
     public static List<double>? Record;
+    /// <summary>Для замера: длительность работы каждого кадра (расчёт + отрисовка).</summary>
+    public static List<double>? Work;
 
     static void Tick()
     {
@@ -116,7 +163,14 @@ static class Motion
                 tw.Done?.Invoke();
             }
         }
-        if (tweens.Count == 0) { timer.Stop(); lastTick = -1; }
+        if (Work != null)
+        {
+            // для замера: сколько длилась работа кадра вместе с отрисовкой (до момента, когда очередь окна опустела)
+            double t0 = now;
+            void Idle(object? s, EventArgs e) { Application.Idle -= Idle; Work?.Add(Now - t0); }
+            Application.Idle += Idle;
+        }
+        if (tweens.Count == 0) { running = false; lastTick = -1; }
     }
 }
 
