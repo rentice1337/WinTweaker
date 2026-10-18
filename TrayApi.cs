@@ -1,13 +1,13 @@
 namespace WinTweaker;
 
-/// <summary>Что пульт в трее может попросить у главного окна.</summary>
+/// <summary>Что значок в трее и строка поиска могут попросить у главного окна.</summary>
 public partial class MainForm
 {
     public int PendingCount => busy ? 0 : Pending();
     public int RevertedCount => reverted.Count;
     public IReadOnlyList<Tweak> AllTweaks => tweaks;
 
-    /// <summary>Разделы бокового меню (название и значок) — для палитры пульта.</summary>
+    /// <summary>Разделы бокового меню (название и значок).</summary>
     public static IEnumerable<(string Cat, string Glyph)> Pages => AllPages;
     public const string GamesPageName = GamesHub;
 

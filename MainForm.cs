@@ -43,7 +43,7 @@ public partial class MainForm : Form
         (SettingsPage, "", new[] { (SettingsPage, "", SettingsPage) }),
     };
 
-    /// <summary>Все страницы (категории) с иконками — для палитры, пульта и сводки.</summary>
+    /// <summary>Все страницы (категории) с иконками — для строки поиска и сводки.</summary>
     static IEnumerable<(string Cat, string Glyph)> AllPages => Sections.SelectMany(s => s.Tabs.Select(t => (t.Cat, t.Glyph)));
 
     static (string Name, string Glyph, (string Cat, string Glyph, string Label)[] Tabs) SectionOf(string cat)
@@ -207,7 +207,7 @@ public partial class MainForm : Form
         {
             trayHintShown = true;
             AppSettings.Set("trayHint", "1");
-            tray?.Balloon("WinTweak работает в трее", "Клик по значку или Ctrl+Alt+W — круговой пульт. Выход — правый клик по значку.");
+            tray?.Balloon("WinTweak работает в трее", "Клик по значку или Ctrl+Alt+W — строка поиска. Выход — правый клик по значку.");
         }
     }
 
@@ -918,88 +918,159 @@ public partial class MainForm : Form
 
     // ───────── Палитра команд ─────────
 
-    void OpenPalette()
+    // ───────── Строка поиска (Ctrl+K в окне, Ctrl+Alt+W и клик по значку в трее) ─────────
+
+    Palette? search;
+
+    /// <summary>Открыть строку поиска или закрыть, если уже открыта.</summary>
+    public void ToggleSearch()
     {
-        if (!loaded || busy) return;
-        if (OwnedForms.OfType<Palette>().Any()) return;
-        var p = new Palette(this, PaletteItems());
-        p.FormClosed += (_, _) => p.Dispose();
-        p.Show(this);
+        if (search is { IsDisposed: false }) { search.CloseAnimated(); return; }
+        // клик по значку при открытой строке сначала закрывает её (потеря фокуса) — не открываем заново
+        if ((DateTime.Now - searchClosed).TotalMilliseconds < 300) return;
+        OpenPalette();
     }
 
+    DateTime searchClosed;
+
+    void OpenPalette()
+    {
+        if (search is { IsDisposed: false }) { search.Activate(); return; }
+        if (!loaded) { Notify("WinTweak ещё проверяет настройки — секунду…"); return; }
+        bool inWindow = Visible && WindowState != FormWindowState.Minimized && ContainsFocus;
+        search = new Palette(this, PaletteItems(), inWindow);
+        search.FormClosed += (_, _) => { searchClosed = DateTime.Now; search?.Dispose(); search = null; };
+        if (inWindow) search.Show(this); else search.Show();
+        search.Activate();
+    }
+
+    /// <summary>Сообщение: в окне — всплывашка, если окно скрыто — уведомление из трея.</summary>
+    void Notify(string text, Tone tone = Tone.Info)
+    {
+        if (Visible && WindowState != FormWindowState.Minimized) Toast.Pop(this, text, tone);
+        else tray?.Balloon("WinTweak", text);
+    }
+
+    /// <summary>Игры, настройки, действия и разделы — то, что ищет строка.</summary>
     List<PaletteItem> PaletteItems()
     {
         var list = new List<PaletteItem>();
         int order = 0;
-        void Cmd(string glyph, string title, string sub, Action run) =>
-            list.Add(new PaletteItem { Glyph = glyph, Title = title, Sub = sub, Run = run, Order = order++, Search = "команда" });
 
-        int pending = Pending();
-        Cmd("", "Применить изменения", pending > 0 ? $"Отмечено изменений: {pending} · Ctrl+Enter" : "Нечего применять", () => _ = ApplyAsync());
-        Cmd("", "Перепроверить настройки", "Перечитать состояние системы · F5", () => _ = LoadStateAsync());
-        Cmd("", "Скопировать код профиля", "Строка WT1-… для друга", CopyCode);
-        Cmd("", "Вставить код профиля", "Из буфера обмена", PasteCode);
-        Cmd("", "Откатить последний сеанс", "Из «Истории»", () =>
+        // ── действия ──
+        void Act(string glyph, string title, string sub, Action run, Func<(string, Color)?>? badge = null) =>
+            list.Add(new PaletteItem { Glyph = glyph, Title = title, Sub = sub, Search = "действие", Order = order++, Run = run, Badge = badge });
+        Act("\uE7FC", "Игровой режим", GameMode.Active ? "Выключить · " + GameMode.Reason : "Без уведомлений и обновлений — до выключения",
+            () => _ = ToggleGameModeNow(), () => GameMode.Active ? ("вкл", Theme.Good) : ("выкл", Theme.Muted));
+        Act("\uE701", "Пинг", "До " + GameMode.Target, () => _ = PingNow());
+        Act("\uE774", "Очистить кэш DNS", "Если сайт «переехал» или не открывается", () => _ = Task.Run(() => Shell.Run("ipconfig.exe", "/flushdns"))
+            .ContinueWith(_ => BeginInvoke(() => Notify("Кэш DNS очищен", Tone.Success))));
+        Act("\uE7F4", "Сброс видеодрайвера", "Как Win+Ctrl+Shift+B — экран мигнёт", () =>
         {
-            var s = Journal.LoadAll().FirstOrDefault(x => !x.RolledBack);
-            if (s == null) Toast.Pop(this, "Откатывать нечего", Tone.Info);
-            else _ = RollbackAsync(new List<Journal.Session> { s });
+            var t = new System.Windows.Forms.Timer { Interval = 200 };
+            t.Tick += (_, _) => { t.Dispose(); GpuReset.Quick(); };
+            t.Start();
         });
-        Cmd("", "Тест скорости DNS", "Диагностика", () => SelectCategory(Diagnostics));
-        Cmd("", "Перезапустить Проводник", "Обслуживание", () => _ = RunBusy("Перезапуск Проводника…", Catalog.RestartExplorer));
-        foreach (var (cat, glyph) in AllPages)
-            list.Add(new PaletteItem { Glyph = glyph, Title = cat, Sub = "Перейти в раздел", Search = "раздел", Order = order++, Run = () => SelectCategory(cat) });
-        for (int i = 0; i < Theme.Accents.Length; i++)
+        Act("\uE8B7", "Перезапустить Проводник", "Если зависла панель задач", () => _ = Task.Run(Catalog.RestartExplorer));
+
+        // ── игры ──
+        foreach (var g in GameLibrary.Shown)
         {
-            int idx = i;
-            list.Add(new PaletteItem { Glyph = "", Title = "Акцент: " + Theme.Accents[i].Name, Sub = "Цвет интерфейса", Search = "цвет тема", Order = 500 + i, Run = () => ChangeAccent(idx) });
+            var game = g;
+            list.Add(new PaletteItem
+            {
+                Glyph = "\uE7FC", Image = game, Title = game.Title, Sub = "Запустить · " + game.Sources, Search = "игра " + game.BaseTitle, Order = 100 + order++,
+                Run = () => { try { GameLibrary.Launch(game); } catch (Exception ex) { Notify("Не удалось запустить: " + ex.Message, Tone.Error); } }
+            });
         }
-        foreach (var set in Sets.Load())
-        {
-            var st = set;
-            list.Add(new PaletteItem { Glyph = "\uE8FD", Title = "Набор: " + st.Name, Sub = $"Отметить {st.Tweaks.Count} настроек", Search = "набор мой", Order = 600 + order++, Run = () => MarkSet(st) });
-        }
-        foreach (var t in tweaks)
+
+        // ── разделы ──
+        foreach (var (cat, glyph) in AllPages.Append((SettingsPage, "\uE713")))
+            list.Add(new PaletteItem { Glyph = glyph, Title = cat, Sub = "Открыть раздел", Search = "раздел", Order = 300 + order++, Run = () => OpenPage(cat) });
+
+        // ── настройки: переключатель применяется сразу ──
+        foreach (var t in tweaks.Where(t => t.Category != StartupManager.Cat))
         {
             var tw = t;
             list.Add(new PaletteItem
             {
-                Glyph = tw.IsAction ? "" : GlyphOf(tw.Category),
+                Glyph = tw.IsAction ? "\uE768" : GlyphOf(tw.Category),
                 Title = tw.Name,
-                Sub = tw.Category + (tw.Group != null ? " · " + tw.Group : ""),
+                Sub = tw.Category + (tw.Group != null ? " · " + tw.Group : "") + (tw.Risky ? " · для опытных" : ""),
                 Search = tw.Description,
                 Order = 1000 + order++,
-                KeepOpen = tw.IsToggle,
-                Badge = tw.IsAction ? () => ("перейти", Theme.Muted)
-                      : tw.IsValue ? () => (tw.ValueText(desVal.GetValueOrDefault(tw)), desVal.GetValueOrDefault(tw) != curVal.GetValueOrDefault(tw) ? Theme.Accent : Theme.Muted)
-                      : () => BadgeFor(tw),
-                Run = tw.IsToggle ? () => TogglePalette(tw) : () => GoTo(tw)
+                Badge = tw.IsAction ? () => ("выполнить", Theme.Muted)
+                      : tw.IsValue ? () => ("открыть", Theme.Muted)
+                      : () => current.GetValueOrDefault(tw) ? ("вкл", Theme.Good) : ("выкл", Theme.Muted),
+                Run = tw.IsToggle ? () => _ = ApplyNow(tw, !current.GetValueOrDefault(tw))
+                    : tw.IsAction ? () => _ = RunActionNow(tw)
+                    : () => { ShowFromTray(); GoTo(tw); }
             });
         }
         return list;
     }
 
-    (string, Color)? BadgeFor(Tweak t)
+    /// <summary>Включить или выключить одну настройку сразу (из строки поиска): с записью в «Историю».</summary>
+    async Task ApplyNow(Tweak t, bool on)
     {
-        bool cur = current.GetValueOrDefault(t), des = desired.GetValueOrDefault(t);
-        if (cur != des) return (des ? "→ вкл" : "→ выкл", Theme.Accent);
-        return cur ? ("вкл", Theme.Good) : ("выкл", Theme.Muted);
+        if (busy) { Notify("Подождите — идёт применение"); return; }
+        if (!on && t.Revert == null) { Notify($"«{t.Name}» не выключается — это можно только включить"); return; }
+        var errors = new List<string>();
+        var list = new List<Tweak> { t };
+        bool makeRestore = restoreToggle.Checked && NeedsRestorePoint(list);
+        bool was = current.GetValueOrDefault(t);
+        await RunBusy(t.Name + "…", () =>
+        {
+            if (makeRestore)
+            {
+                try { CreateRestorePoint(); } catch (Exception ex) { errors.Add("Точка восстановления: " + ex.Message); }
+            }
+            var session = Journal.StartSession();
+            Journal.Begin(session, t, was, on);
+            try { if (on) t.Apply(); else t.Revert!.Invoke(); }
+            catch (Exception ex) { errors.Add(ex.Message); }
+            finally { Journal.End(); }
+            try { Journal.Save(session); } catch { }
+        });
+        await RefreshAfterApply(list);
+        if (errors.Count > 0) Notify($"«{t.Name}»: {string.Join("; ", errors)}", Tone.Error);
+        else Notify($"«{t.Name}» — {(on ? "включено" : "выключено")}" + (t.NeedsRestart ? ". Заработает после перезагрузки" : ""), Tone.Success);
     }
 
-    void TogglePalette(Tweak t)
+    async Task RunActionNow(Tweak t)
     {
-        if (desired.GetValueOrDefault(t) && t.Revert == null && current.GetValueOrDefault(t))
+        if (busy) { Notify("Подождите — идёт применение"); return; }
+        if (await RunBusy(t.Name + "…", t.Apply)) Notify("Готово: " + t.Name, Tone.Success);
+    }
+
+    async Task ToggleGameModeNow()
+    {
+        bool on = !GameMode.Active;
+        try
         {
-            Toast.Pop(this, $"«{t.Name}» не выключается — это можно только включить", Tone.Info);
-            return;
+            if (on) await Task.Run(() => GameMode.Enter("включён вручную"));
+            else await Task.Run(() => GameMode.Exit(GameMode.Reason ?? "Вручную"));
         }
-        desired[t] = !desired.GetValueOrDefault(t);
-        foreach (var r in Rows().Where(r => r.T == t && r.Toggle != null))
+        catch (Exception ex) { Notify("Игровой режим: " + ex.Message, Tone.Error); return; }
+        Notify(on ? "Игровой режим включён" : "Игровой режим выключен — всё вернулось как было", Tone.Success);
+    }
+
+    async Task PingNow()
+    {
+        var times = new List<double>();
+        int lost = 0;
+        try
         {
-            r.Toggle!.Checked = desired[t];
-            r.Changed = desired[t] != current.GetValueOrDefault(t);
+            var ip = await GameNet.Resolve(GameMode.Target);
+            for (int i = 0; i < 6 && ip != null; i++)
+            {
+                if (await GameNet.IcmpPing(ip, 1000) is double v) times.Add(v); else lost++;
+                await Task.Delay(120);
+            }
         }
-        UpdatePending();
+        catch { }
+        if (times.Count == 0) Notify($"Пинг до {GameMode.Target}: нет ответа", Tone.Warning);
+        else Notify($"Пинг до {GameMode.Target}: {times.Average():0} мс, ±{GameNet.Jitter(times):0} мс, потерь {lost} из 6", Tone.Info);
     }
 
     // ───────── Профили ─────────

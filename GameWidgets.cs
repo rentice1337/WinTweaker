@@ -511,7 +511,7 @@ class LibraryWidget : Widget
         if (ShowHidden)
         {
             TextRenderer.DrawText(g, $"СКРЫТЫЕ · {hidden.Count}", Theme.Small, new Point(r.Left + 18, HiddenTop - 26), C(Theme.Muted));
-            TextRenderer.DrawText(g, "не видны в списке и на пульте; глаз — вернуть", Theme.Tiny,
+            TextRenderer.DrawText(g, "не видны в списке и в поиске; глаз — вернуть", Theme.Tiny,
                 new Point(r.Left + 18 + TextRenderer.MeasureText($"СКРЫТЫЕ · {hidden.Count}", Theme.Small).Width + 10, HiddenTop - 27), C(Theme.Dim));
             for (int i = 0; i < hidden.Count; i++)
                 Tile(g, hidden[i], TileRect(HiddenBase + i), HiddenBase + i == hover ? lift.Value : 0, HiddenBase + i, true);

@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace WinTweaker;
 
 /// <summary>
-/// Правки списка игр: скрытые, свои названия и обложки, порядок, закреплённые, игры на кольце пульта
+/// Правки списка игр: скрытые, свои названия и обложки, порядок, закреплённые
 /// и лаунчер по умолчанию для игры, установленной в нескольких местах.
 /// Игра опознаётся по ключу из названия — одна и та же игра из Steam, EA app и добавленная вручную имеет один ключ.
 /// Хранится в %AppData%\WinTweaker\gameprefs.json.
@@ -24,8 +24,6 @@ static class GamePrefs
         public Dictionary<string, string> Names { get; set; } = new();
         public Dictionary<string, string> Covers { get; set; } = new();
         public Dictionary<string, string> Launcher { get; set; } = new();
-        /// <summary>Игры на кольце пульта по порядку; null — автоматически (первые из списка).</summary>
-        public List<string>? Wheel { get; set; }
     }
 
     static Data d = Load();
@@ -153,20 +151,10 @@ static class GamePrefs
         covers.Remove(key);
         Save();
     }
-
-    // ───── кольцо пульта ─────
-
-    public static IReadOnlyList<string>? Wheel => d.Wheel;
-
-    public static void SetWheel(IEnumerable<string>? keys)
-    {
-        d.Wheel = keys?.ToList();
-        Save();
-    }
 }
 
 /// <summary>
-/// Готовые картинки игр под точный размер на экране: обложка со сглаженными углами и круглая «монета» для пульта.
+/// Готовые картинки игр под точный размер на экране: обложка со сглаженными углами и круглая «монета».
 /// Масштабирование — один раз и в высоком качестве, дальше рисуется пиксель в пиксель: без мыла, лесенки и лагов.
 /// </summary>
 static class GameArt

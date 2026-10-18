@@ -12,23 +12,30 @@ sealed class PaletteItem
     public int Order;                     // при пустом запросе — порядок показа
     public Func<(string Text, Color Color)?>? Badge;
     public Action Run = () => { };
-    public bool KeepOpen;                 // переключатели: палитра остаётся открытой
+    public bool KeepOpen;                 // строка остаётся открытой после выполнения
+    public InstalledGame? Image;          // игра — вместо значка её круглая обложка
 }
 
-/// <summary>Палитра команд (Ctrl+K): нечёткий поиск по всему, управление стрелками, Enter — выполнить.</summary>
+/// <summary>
+/// Строка поиска (Ctrl+K в окне, Ctrl+Alt+W и клик по значку в трее): игры, настройки, действия и разделы.
+/// Нечёткий поиск, стрелки — выбор, Enter — выполнить. Из трея открывается по центру экрана поверх всех окон.
+/// </summary>
 class Palette : RoundForm
 {
     readonly TextBox box = new();
     readonly PaletteList list;
     readonly List<PaletteItem> all;
     readonly Form owner;
+    readonly bool inWindow;
     bool closing;
 
     const int W = 640, BoxH = 58, FootH = 34;
 
-    public Palette(Form owner, List<PaletteItem> items)
+    public Palette(Form owner, List<PaletteItem> items, bool inWindow)
     {
         this.owner = owner;
+        this.inWindow = inWindow;
+        TopMost = !inWindow;
         all = items;
         StartPosition = FormStartPosition.Manual;
         KeyPreview = true;
@@ -38,7 +45,7 @@ class Palette : RoundForm
         box.BackColor = Theme.Card;
         box.ForeColor = Theme.Text;
         box.Font = Theme.F(13f);
-        box.PlaceholderText = "Найти настройку, раздел или команду…";
+        box.PlaceholderText = "Игра, настройка, действие или раздел…";
         Controls.Add(box);
 
         list = new PaletteList();
@@ -121,13 +128,21 @@ class Palette : RoundForm
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        int x = owner.Left + (owner.Width - Width) / 2, y = owner.Top + 86;
+        int x, y;
+        if (inWindow) { x = owner.Left + (owner.Width - Width) / 2; y = owner.Top + 86; }
+        else
+        {
+            // из трея или по горячей клавише — по центру экрана, где курсор
+            var sc = Screen.FromPoint(Cursor.Position).WorkingArea;
+            x = sc.Left + (sc.Width - Width) / 2;
+            y = sc.Top + sc.Height / 5;
+        }
         Location = new Point(x, y + 10);
         box.Focus();
         Motion.Run(220, p => { if (!IsDisposed) { Opacity = p; Top = y + (int)Math.Round(10 * (1 - p)); } });
     }
 
-    void CloseAnimated()
+    public void CloseAnimated()
     {
         if (closing) return;
         closing = true;
@@ -148,7 +163,7 @@ class Palette : RoundForm
         int fy = Height - FootH;
         using (var pen = new Pen(Theme.Line)) g.DrawLine(pen, 0, fy, Width, fy);
         int x = 16;
-        foreach (var (key, text) in new[] { ("↑↓", "выбор"), ("Enter", "выполнить / переключить"), ("Esc", "закрыть") })
+        foreach (var (key, text) in new[] { ("↑↓", "выбор"), ("Enter", "выполнить"), ("Esc", "закрыть") })
         {
             var ks = TextRenderer.MeasureText(key, Theme.Small);
             var cap = new RectangleF(x, fy + 8, ks.Width + 10, 18);
@@ -251,9 +266,13 @@ class PaletteList : Control, IWheelTarget
             int y = i * RowH;
             bool isSel = top + i == sel;
             var circle = new RectangleF(14, y + 9, 30, 30);
-            Theme.Fill(g, Color.FromArgb(isSel ? 70 : 34, Theme.Accent), circle, 15);
-            TextRenderer.DrawText(g, it.Glyph, Theme.Icon, Rectangle.Round(circle), isSel ? Theme.Text : Theme.Accent,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            if (it.Image != null) GameArt.Blit(g, GameArt.Coin(it.Image, 30), 14, y + 9);
+            else
+            {
+                Theme.Fill(g, Color.FromArgb(isSel ? 70 : 34, Theme.Accent), circle, 15);
+                TextRenderer.DrawText(g, it.Glyph, Theme.Icon, Rectangle.Round(circle), isSel ? Theme.Text : Theme.Accent,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
 
             int right = 16;
             var badge = it.Badge?.Invoke();

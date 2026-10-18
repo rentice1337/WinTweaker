@@ -69,15 +69,6 @@ static class GameLibrary
     public static List<InstalledGame> Shown => View().Where(g => !GamePrefs.IsHidden(g.Key)).ToList();
     public static List<InstalledGame> Hidden => View().Where(g => GamePrefs.IsHidden(g.Key)).ToList();
 
-    /// <summary>Игры для кольца пульта: свой список или первые из показанных.</summary>
-    public static List<InstalledGame> ForWheel(int max)
-    {
-        var all = View();
-        if (GamePrefs.Wheel is { } keys)
-            return keys.Select(k => all.FirstOrDefault(g => g.Key == k)).OfType<InstalledGame>().Take(max).ToList();
-        return all.Where(g => !GamePrefs.IsHidden(g.Key)).Take(max).ToList();
-    }
-
     static List<InstalledGame> View()
     {
         var list = Games.Where(g => g.Exe != null).ToList();

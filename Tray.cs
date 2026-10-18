@@ -5,7 +5,7 @@ namespace WinTweaker;
 
 /// <summary>
 /// Значок в трее: логотип WinTweak с точкой состояния (зелёная — всё в порядке, жёлтая — есть совет,
-/// красная — проблема, цвет акцента — идёт игровой режим). Левый клик и Ctrl+Alt+W — круговой пульт,
+/// красная — проблема, цвет акцента — идёт игровой режим). Левый клик и Ctrl+Alt+W — строка поиска,
 /// правый клик — короткое меню.
 /// </summary>
 sealed class Tray : IDisposable
@@ -15,8 +15,6 @@ sealed class Tray : IDisposable
     readonly NotifyIcon icon = new() { Text = "WinTweak", Visible = true };
     readonly MainForm main;
     readonly HotkeyWindow hotkey;
-    TrayWheel? wheel;
-    DateTime wheelClosed;
     IntPtr lastHandle;
     Color lastDot, lastAccent;
     int tick;
@@ -26,11 +24,11 @@ sealed class Tray : IDisposable
     public Tray(MainForm main)
     {
         this.main = main;
-        icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ToggleWheel(Cursor.Position); };
+        icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) main.ToggleSearch(); };
 
         var menu = new ContextMenuStrip { Renderer = new DarkRenderer(), Font = Theme.Body };
         menu.Items.Add("Открыть WinTweak", null, (_, _) => main.ShowFromTray());
-        menu.Items.Add("Пульт", null, (_, _) => ToggleWheel(Cursor.Position));
+        menu.Items.Add("Поиск", null, (_, _) => main.ToggleSearch());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Выход", null, (_, _) => main.ExitApp());
         icon.ContextMenuStrip = menu;
@@ -43,21 +41,10 @@ sealed class Tray : IDisposable
         Update();
     }
 
-    /// <summary>Занять глобальное сочетание пульта из настроек. Возвращает, удалось ли.</summary>
-    public bool ApplyHotkeys() => hotkey.Set(1, WheelSettings.Hotkey, () => ToggleWheel(Cursor.Position));
+    /// <summary>Занять глобальное сочетание строки поиска из настроек. Возвращает, удалось ли.</summary>
+    public bool ApplyHotkeys() => hotkey.Set(1, SearchHotkey.Hotkey, main.ToggleSearch);
 
     public void Balloon(string title, string text) => icon.ShowBalloonTip(4000, title, text, ToolTipIcon.Info);
-
-    public void ToggleWheel(Point at)
-    {
-        if (wheel is { IsDisposed: false }) { wheel.CloseAnimated(); return; }
-        // клик по значку при открытом пульте сначала закрывает его (потеря фокуса) — не открываем заново
-        if ((DateTime.Now - wheelClosed).TotalMilliseconds < 250) return;
-        wheel = new TrayWheel(main, at);
-        wheel.FormClosed += (_, _) => { wheelClosed = DateTime.Now; wheel = null; Refresh(); };
-        wheel.Show();
-        wheel.Activate();
-    }
 
     void Refresh()
     {
@@ -110,7 +97,6 @@ sealed class Tray : IDisposable
     {
         Sampler.Updated -= Update;
         GameMode.Changed -= Refresh;
-        wheel?.Close();
         hotkey.Set(1, Keys.None, null);
         hotkey.Set(2, Keys.None, null);
         hotkey.DestroyHandle();
@@ -120,7 +106,7 @@ sealed class Tray : IDisposable
     }
 }
 
-/// <summary>Невидимое окно для глобальных горячих клавиш (пульт).</summary>
+/// <summary>Невидимое окно для глобальной горячей клавиши строки поиска.</summary>
 sealed class HotkeyWindow : NativeWindow
 {
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);

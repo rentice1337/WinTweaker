@@ -126,7 +126,7 @@ class WelcomeDialog : RoundForm
             Theme.Body, new Rectangle(86, 54, Width - 110, 44), Theme.Muted, TextFormatFlags.WordBreak);
         using (var pen = new Pen(Theme.Line)) g.DrawLine(pen, 24, 136, Width - 24, 136);
         TextRenderer.DrawText(g, "Работать в трее", Theme.Semi, new Point(24, 170), Theme.Text);
-        TextRenderer.DrawText(g, "Крестик прячет окно; в трее — значок и круговой пульт (Ctrl+Alt+W)", Theme.Tiny, new Rectangle(24, 192, Width - 110, 18), Theme.Muted, TextFormatFlags.EndEllipsis);
+        TextRenderer.DrawText(g, "Крестик прячет окно; в трее — значок, по клику — строка поиска (Ctrl+Alt+W)", Theme.Tiny, new Rectangle(24, 192, Width - 110, 18), Theme.Muted, TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, "Запускать вместе с Windows", Theme.Semi, new Point(24, 230), Theme.Text);
         TextRenderer.DrawText(g, "Нужно, чтобы игровой режим включался сам при запуске игр", Theme.Tiny, new Rectangle(24, 252, Width - 110, 18), Theme.Muted, TextFormatFlags.EndEllipsis);
         TextRenderer.DrawText(g, "Это можно поменять в любой момент в «Настройках».", Theme.Tiny, new Rectangle(24, Height - 58, 320, 20), Theme.Dim, TextFormatFlags.Left);
@@ -225,7 +225,7 @@ public partial class MainForm
         Tour();
     }
 
-    /// <summary>Короткий тур: «Применить», поиск, пульт в трее.</summary>
+    /// <summary>Короткий тур: «Применить», поиск, значок в трее.</summary>
     void Tour()
     {
         var area = Screen.FromControl(this).WorkingArea;
@@ -235,7 +235,7 @@ public partial class MainForm
                 () => applyBtn.RectangleToScreen(applyBtn.ClientRectangle)),
             ("Поиск по всему", "Ctrl+K — найдёт любую настройку, раздел или действие. Можно печатать с ошибкой в раскладке.",
                 () => trigger.RectangleToScreen(trigger.ClientRectangle)),
-            ("Пульт в трее", "WinTweak живёт в трее: клик по значку или Ctrl+Alt+W — круговой пульт с играми, пингом и игровым режимом.",
+            ("Поиск из трея", "WinTweak живёт в трее: клик по значку или Ctrl+Alt+W — строка поиска: игры, настройки, действия и разделы.",
                 () => new Rectangle(area.Right - 120, area.Bottom - 4, 80, 4)),
         };
         for (int i = 0; i < steps.Length; i++)

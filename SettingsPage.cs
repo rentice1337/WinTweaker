@@ -53,7 +53,7 @@ public partial class MainForm
                 autostartOn = ok ? on : !on;
             });
         cv.Controls.Add(tray);
-        BuildWheelCard(cv);
+        BuildSearchCard(cv);
 
         // ── Свои наборы ──
         var sets = new SetsWidget(Sets.Load(), s => Shareable.Count(t => s.Tweaks.Contains(t.Name)));
