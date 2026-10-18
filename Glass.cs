@@ -19,7 +19,7 @@ static class Glass
     public static readonly Color HoverTint = Color.FromArgb(20, 255, 255, 255);
     public static readonly Color Border = Color.FromArgb(26, 255, 255, 255);
 
-    static Bitmap? backdrop;   // высота 3H: [кадр, отражённый кадр, кадр] — период 2H, любой кусок ≤ H вырезается одним блитом
+    static Dib? backdrop;      // высота 3H: [кадр, отражённый кадр, кадр] — период 2H, любой кусок ≤ H вырезается одним блитом
     static int frameH;
     static Form? host;
 
@@ -55,8 +55,8 @@ static class Glass
             Blob(g, new PointF(size.Width * 0.70f, size.Height * 0.30f), size.Width * 0.35f, Color.FromArgb(12, 120, 140, 255));
         }
 
-        var tall = new Bitmap(size.Width, size.Height * 3, PixelFormat.Format32bppPArgb);
-        using (var g = Graphics.FromImage(tall))
+        var tall = new Dib(size.Width, size.Height * 3);
+        using (var g = Graphics.FromImage(tall.Bitmap))
         {
             g.CompositingMode = CompositingMode.SourceCopy;
             g.DrawImageUnscaled(frame, 0, 0);
@@ -108,12 +108,7 @@ static class Glass
         int sy = ((o.Y + clip.Y) % period + period) % period;
         int sx = Math.Clamp(o.X + clip.X, 0, Math.Max(0, backdrop.Width - clip.Width));
         int h = Math.Min(clip.Height, backdrop.Height - sy);
-        var state = g.Save();
-        g.CompositingMode = CompositingMode.SourceCopy;
-        g.InterpolationMode = InterpolationMode.NearestNeighbor;
-        g.PixelOffsetMode = PixelOffsetMode.None;
-        g.DrawImage(backdrop, new Rectangle(clip.X, clip.Y, clip.Width, h), new Rectangle(sx, sy, clip.Width, h), GraphicsUnit.Pixel);
-        g.Restore(state);
+        backdrop.Blit(g, clip.X, clip.Y, clip.Width, h, sx, sy); // копирует Windows (BitBlt), а не GDI+
 
         // слои над фоном
         for (var p = c; p != null; p = p.Parent)
@@ -290,7 +285,7 @@ class Canvas : Control
     sealed class Ghost
     {
         public Control Target = null!;
-        public Bitmap Bmp = null!;
+        public Dib Bmp = null!;
         public double Delay;
         public double A;
     }
@@ -314,8 +309,8 @@ class Canvas : Control
         foreach (var c in items)
         {
             if (c.Width <= 0 || c.Height <= 0 || c.Top > Height) continue;
-            var bmp = new Bitmap(c.Width, c.Height, PixelFormat.Format32bppPArgb);
-            try { c.DrawToBitmap(bmp, new Rectangle(0, 0, c.Width, c.Height)); }
+            var bmp = new Dib(c.Width, c.Height);
+            try { c.DrawToBitmap(bmp.Bitmap, new Rectangle(0, 0, c.Width, c.Height)); }
             catch { bmp.Dispose(); continue; }
             ghosts.Add(new Ghost { Target = c, Bmp = bmp, Delay = i++ * stagger });
             c.Visible = false;
@@ -371,16 +366,13 @@ class Canvas : Control
         Glass.Back(e.Graphics, this);
         if (ghosts.Count == 0) return;
         var g = e.Graphics;
-        using var ia = new ImageAttributes();
         foreach (var gh in ghosts)
         {
             if (gh.A <= 0.004) continue;
             int y = gh.Target.Top + (int)Math.Round((1 - gh.A) * Rise);
             var dest = new Rectangle(gh.Target.Left, y, gh.Bmp.Width, gh.Bmp.Height);
             if (!dest.IntersectsWith(e.ClipRectangle)) continue;
-            if (gh.A >= 0.995) { g.DrawImageUnscaled(gh.Bmp, dest.Location); continue; }
-            ia.SetColorMatrix(new ColorMatrix { Matrix33 = (float)gh.A });
-            g.DrawImage(gh.Bmp, dest, 0, 0, gh.Bmp.Width, gh.Bmp.Height, GraphicsUnit.Pixel, ia);
+            gh.Bmp.Blend(g, dest.X, dest.Y, gh.A); // AlphaBlend Windows вместо полупрозрачного DrawImage GDI+
         }
     }
 }
